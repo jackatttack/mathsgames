@@ -29,7 +29,13 @@ from style import theme
 from tilegame.board_state import OPERATION_SYMBOLS, format_value
 from tilegame.targets import TargetSession
 from tilegame.ui import MultipleMergeBoardView
-from tilegame.widgets import ChoiceRow, TargetBanner, make_button, make_label
+from tilegame.widgets import (
+    ChoiceRow,
+    TargetBanner,
+    draw_centred_text,
+    make_button,
+    make_label,
+)
 
 from games.countdown import rules
 
@@ -58,6 +64,7 @@ SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
 DEFAULT_SETTINGS = {
     "big_count": rules.DEFAULT_BIG_COUNT,
     "hints": False,
+    "show_factors": False,
 }
 
 
@@ -77,8 +84,9 @@ def load_settings():
     if saved.get("big_count") in rules.BIG_COUNT_CHOICES:
         settings["big_count"] = saved["big_count"]
 
-    if isinstance(saved.get("hints"), bool):
-        settings["hints"] = saved["hints"]
+    for key in ("hints", "show_factors"):
+        if isinstance(saved.get(key), bool):
+            settings[key] = saved[key]
 
     return settings
 
@@ -97,6 +105,60 @@ def describe_step(step):
     return "{} {} {} = {}".format(
         left, OPERATION_SYMBOLS[operation], right, value
     )
+
+
+# --- factors card -----------------------------------------------------------
+
+class FactorsCard(ui.View):
+    """The target's prime factorisation, revealed or hidden by a tap.
+
+    Compact on purpose: the empty board below it stays free for double-tap
+    undo. Drawn in one pass; on_toggle() is called on tap.
+    """
+
+    RADIUS = 16
+    SURFACE = theme.color("surface")
+
+    def __init__(self):
+        super().__init__()
+        self.background_color = BACKGROUND
+        self.target = None
+        self.revealed = False
+        self.on_toggle = None
+
+    def show(self, target, revealed):
+        self.target = target
+        self.revealed = revealed
+        self.set_needs_display()
+
+    def layout(self):
+        self.set_needs_display()
+
+    def draw(self):
+        w, h = self.width, self.height
+
+        if w <= 1 or h <= 1 or self.target is None:
+            return
+
+        ui.set_color(self.SURFACE)
+        ui.Path.rounded_rect(0, 0, w, h, self.RADIUS).fill()
+
+        draw_centred_text("FACTORS", ("AvenirNext-DemiBold", 12), MUTED,
+                          0, 8, w, 14)
+
+        if self.revealed:
+            text = rules.describe_factors(self.target).split("\n")[0]
+            draw_centred_text(text, ("AvenirNext-Bold", 20), ACCENT,
+                              0, 22, w, h - 28)
+        else:
+            draw_centred_text("Tap to reveal", ("AvenirNext-Medium", 16), TEXT,
+                              0, 22, w, h - 28)
+
+    def touch_ended(self, touch):
+        x, y = touch.location
+        if 0 <= x <= self.width and 0 <= y <= self.height:
+            if self.on_toggle is not None:
+                self.on_toggle()
 
 
 # --- settings panel ---------------------------------------------------------
@@ -205,6 +267,7 @@ class CountdownScreen(ui.View):
 
     SIDE_MARGIN = 16
     BOTTOM_BAR = 112      # leaves room above the home indicator
+    FACTORS_CARD_HEIGHT = 64   # compact, leaving empty board for undo
 
     def __init__(self, board, **kwargs):
         super().__init__(**kwargs)
@@ -234,12 +297,17 @@ class CountdownScreen(ui.View):
         self.reset_button = make_button("Reset board", self.reset_tapped)
         self.action_button = make_button("Skip", self.action_tapped)
 
+        # Factors of the target: a card that reveals and hides on tap.
+        self.factors_card = FactorsCard()
+        self.factors_card.on_toggle = self.factors_tapped
+
         self.settings_panel = SettingsPanel(self)
 
         for view in (
             self.banner,
             self.status_label,
             self.board_view,
+            self.factors_card,
             self.reset_button,
             self.action_button,
             self.settings_panel,   # last, so it covers everything
@@ -276,19 +344,39 @@ class CountdownScreen(ui.View):
         self.status_label.frame = (margin, status_top, width - 2 * margin, 24)
 
         board_top = status_top + 30
+        buttons_y = height - self.BOTTOM_BAR + 16
+
+        # Where the tiles end (three columns make the board width-limited).
+        board = self.board_view
+        cols, rows = rules.BOARD_COLS, rules.BOARD_ROWS
+        side = (
+            width - 2 * board.BOARD_MARGIN - (cols - 1) * board.TILE_GAP
+        ) / cols
+        board_height = (
+            rows * side + (rows - 1) * board.TILE_GAP + 2 * board.BOARD_MARGIN
+        )
+
+        # The board view runs down to the buttons, so the empty space below
+        # the tiles is still board and double-tap undo works there.
         self.board_view.frame = (
-            0,
-            board_top,
-            width,
-            max(0, height - board_top - self.BOTTOM_BAR),
+            0, board_top, width, max(0, buttons_y - 12 - board_top)
+        )
+
+        # The factors card sits just under the tiles, on top of the board.
+        card_y = min(
+            board_top + board_height,
+            buttons_y - 12 - self.FACTORS_CARD_HEIGHT,
+        )
+        self.factors_card.frame = (
+            margin, card_y, width - 2 * margin, self.FACTORS_CARD_HEIGHT
         )
 
         button_width = min(160, (width - 3 * margin) / 2)
-        y = height - self.BOTTOM_BAR + 16
-        self.reset_button.frame = (
-            width / 2 - button_width - 6, y, button_width, 48
+        row_left = (width - (2 * button_width + 12)) / 2
+        self.reset_button.frame = (row_left, buttons_y, button_width, 48)
+        self.action_button.frame = (
+            row_left + button_width + 12, buttons_y, button_width, 48
         )
-        self.action_button.frame = (width / 2 + 6, y, button_width, 48)
 
         self.settings_panel.frame = self.bounds
 
@@ -345,6 +433,8 @@ class CountdownScreen(ui.View):
             self.show_action("Next board", primary=True)
         else:
             self.show_action("Skip", primary=False)
+
+        self._show_factors()
 
     def move_committed(self, result):
         """Called by the board view for every committed move."""
@@ -409,6 +499,16 @@ class CountdownScreen(ui.View):
             )
 
     # --- buttons -------------------------------------------------------------
+
+    def factors_tapped(self, sender=None):
+        """Show or hide the target's factors; the choice is remembered."""
+        self.settings["show_factors"] = not self.settings["show_factors"]
+        save_settings(self.settings)
+        self._show_factors()
+
+    def _show_factors(self):
+        target = self.round.target if self.round is not None else None
+        self.factors_card.show(target, bool(self.settings["show_factors"]))
 
     def reset_tapped(self, sender):
         """Back to the starting numbers; the closest value so far is kept."""

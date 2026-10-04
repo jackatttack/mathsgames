@@ -18,7 +18,7 @@ It installs everything into `Documents/Maths Games/` and opens the launcher.
 
 ## Play
 
-Run `Maths Games/maths_games.py`. Pick a game from the home screen; the
+Run `Maths Games/launch_mathsgames.py`. Pick a game from the home screen; the
 back arrow returns to it and the cross closes the app.
 
 ## The games
@@ -55,16 +55,16 @@ Every game is a folder in `games/` plus one line in
 
 ## Project layout
 
-    maths_games.py   the launcher
-    install.py       install or update
-    launcher/        home screen, shared header, app shell
-    gamecore/        game contract and catalogue
-    games/           one folder per game
-    tilegame/        shared tile board, rules, widgets and scoring
-    tilekit/         the TileKit board engine
-    style/           colours, fonts, layout tokens
-    feel/            touch feedback and haptics
-    docs/            guides
+    launch_mathsgames.py   run this to play
+    install.py             install or update
+    launcher/              home screen, shared header, app shell
+    gamecore/              game contract and catalogue
+    games/                 one folder per game
+    tilegame/              shared tile board, rules, widgets and scoring
+    tilekit/               the TileKit board engine
+    style/                 colours, fonts, layout tokens
+    feel/                  touch feedback and haptics
+    docs/                  guides
 
 ## Requirements
 

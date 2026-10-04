@@ -5,7 +5,7 @@ Run it again at any time to update: the game code is replaced with the
 latest version from GitHub, and your saved settings are kept.
 
     Installs to:  Documents/Maths Games/
-    Launcher:     Documents/Maths Games/maths_games.py
+    Launcher:     Documents/Maths Games/launch_mathsgames.py
 
 Options (for testing):
     --from-folder PATH   install from a local copy instead of GitHub
@@ -26,7 +26,11 @@ import zipfile
 REPOSITORY = "jackatttack/mathsgames"
 REF = "main"
 APP_FOLDER = "Maths Games"
-LAUNCHER = "maths_games.py"
+LAUNCHER = "launch_mathsgames.py"
+
+# Files earlier releases shipped that are gone now. An update removes them
+# so an old install does not keep a second, stale launcher.
+RETIRED_FILES = ("maths_games.py",)
 
 # Files the app writes while you play. Updates never replace or remove them.
 PLAYER_FILES = ("settings.json",)
@@ -105,6 +109,11 @@ def install_from(release, target):
             )
         else:
             shutil.copy2(source, destination)
+
+    for name in RETIRED_FILES:
+        path = os.path.join(target, name)
+        if name not in shipped and os.path.isfile(path):
+            os.remove(path)
 
     restore_player_files(target, saved)
     return shipped, saved

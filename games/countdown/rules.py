@@ -284,6 +284,59 @@ def next_hint_step(round_, board):
     return round_.next_route_step(numbers)
 
 
+# --- factors ----------------------------------------------------------------
+
+SUPERSCRIPTS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def prime_factors(n):
+    """[(prime, power), ...] for n >= 2, smallest prime first."""
+    factors = []
+    prime = 2
+
+    while prime * prime <= n:
+        power = 0
+        while n % prime == 0:
+            n //= prime
+            power += 1
+        if power:
+            factors.append((prime, power))
+        prime += 1
+
+    if n > 1:
+        factors.append((n, 1))
+
+    return factors
+
+
+def factor_pairs(n):
+    """Every (a, b) with a × b = n and a <= b, smallest a first."""
+    return [
+        (a, n // a)
+        for a in range(1, int(n ** 0.5) + 1)
+        if n % a == 0
+    ]
+
+
+def describe_factors(n):
+    """Two lines for the factors panel.
+
+    '352 = 2⁵ × 11' (or '797 is prime'), then every factor pair.
+    """
+    primes = prime_factors(n)
+
+    if primes == [(n, 1)]:
+        first = "{} is prime".format(n)
+    else:
+        first = "{} = {}".format(n, " × ".join(
+            str(prime) + (str(power).translate(SUPERSCRIPTS) if power > 1 else "")
+            for prime, power in primes
+        ))
+
+    pairs = "  ·  ".join("{}×{}".format(a, b) for a, b in factor_pairs(n))
+    return first + "\n" + pairs
+
+
 def cells_for_step(board, step):
     """The (source, destination) cells holding a step's left and right values."""
     left, _, right, _ = step
