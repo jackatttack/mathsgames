@@ -1,0 +1,1 @@
+"""Maths Games visual style: one theme for every game and the launcher."""

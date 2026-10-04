@@ -1,0 +1,1 @@
+"""Multiple Merge game package."""

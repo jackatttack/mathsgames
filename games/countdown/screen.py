@@ -1,0 +1,433 @@
+"""Countdown game screen: target banner, 2 × 3 board, Reset, Skip, settings.
+
+Lives under the Maths Games shell and uses the header contract from
+gamecore/game.py: open_settings() puts a gear in the header, and
+header_subtitle describes the deal ("1 big · 5 small").
+
+Play: any two tiles merge with + − × ÷; results must be positive whole
+numbers (the board's rules enforce this, and only legal destinations light
+up). Making the target solves the board: 10 points, the streak grows and the
+solve time is shown. Skip scores the closest value so far (within 5 scores 7,
+within 10 scores 5) and resets the streak. There is no clock.
+
+Hints (a setting, off by default): tap the target. The first tap shows the
+next step of a shortest route from the current board, armed on the tiles;
+tapping again plays it.
+
+UI stability (see JACK_BOOT): every change happens synchronously inside the
+tap that caused it, views are created once and only shown, hidden or
+re-labelled, and settings are saved immediately.
+"""
+
+import json
+import os
+import time
+
+import ui
+
+from style import theme
+from tilegame.board_state import OPERATION_SYMBOLS, format_value
+from tilegame.targets import TargetSession
+from tilegame.ui import MultipleMergeBoardView
+from tilegame.widgets import ChoiceRow, TargetBanner, make_button, make_label
+
+from games.countdown import rules
+
+
+# --- colours, from the shared theme -----------------------------------------
+
+BACKGROUND = theme.color("background")
+TEXT = theme.color("text")
+MUTED = theme.color("muted")
+BUTTON_COLOR = theme.color("button")
+ACCENT = theme.color("tile")
+
+# --- editable layout, in points ---------------------------------------------
+
+TOP_GAP = 8
+TOP_AREA_HEIGHT = 96
+
+BIG_COUNT_LABELS = tuple(str(count) for count in rules.BIG_COUNT_CHOICES)
+
+
+# --- saved settings ---------------------------------------------------------
+
+GAME_DIR = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
+
+DEFAULT_SETTINGS = {
+    "big_count": rules.DEFAULT_BIG_COUNT,
+    "hints": False,
+}
+
+
+def load_settings():
+    """Return saved settings, using defaults for anything missing or invalid."""
+    settings = dict(DEFAULT_SETTINGS)
+
+    try:
+        with open(SETTINGS_PATH) as handle:
+            saved = json.load(handle)
+    except (OSError, ValueError):
+        return settings
+
+    if not isinstance(saved, dict):
+        return settings
+
+    if saved.get("big_count") in rules.BIG_COUNT_CHOICES:
+        settings["big_count"] = saved["big_count"]
+
+    if isinstance(saved.get("hints"), bool):
+        settings["hints"] = saved["hints"]
+
+    return settings
+
+
+def save_settings(settings):
+    """Save settings now. A failed save is reported but never crashes play."""
+    try:
+        with open(SETTINGS_PATH, "w") as handle:
+            json.dump(settings, handle)
+    except OSError as error:
+        print("Countdown: could not save settings: {}".format(error))
+
+
+def describe_step(step):
+    left, operation, right, value = step
+    return "{} {} {} = {}".format(
+        left, OPERATION_SYMBOLS[operation], right, value
+    )
+
+
+# --- settings panel ---------------------------------------------------------
+
+class SettingsPanel(ui.View):
+    """Overlay editing a draft of the settings, covering the game area.
+
+    Done adopts the draft (dealing a new board only if the big-number count
+    changed). New board adopts it and always deals.
+    """
+
+    TOP = 16
+
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+        self.background_color = BACKGROUND
+        self.hidden = True
+        self.draft = dict(screen.settings)
+
+        self.title_label = make_label(
+            "Settings", ("AvenirNext-Bold", 24), TEXT
+        )
+        self.big_caption = make_label(
+            "Big numbers (25, 50, 75, 100)", ("AvenirNext-Medium", 15), MUTED
+        )
+        self.big_control = ChoiceRow(BIG_COUNT_LABELS, self.big_count_changed)
+
+        self.hints_label = make_label(
+            "Hints: tap the target to see the next step",
+            ("AvenirNext-Medium", 15),
+            TEXT,
+            alignment=ui.ALIGN_LEFT,
+        )
+        self.hints_label.number_of_lines = 2
+        self.hints_switch = ui.Switch()
+        self.hints_switch.action = self.hints_changed
+
+        self.new_board_button = make_button(
+            "New board", self.new_board_tapped,
+            background=ACCENT, title_color=BACKGROUND,
+        )
+        self.done_button = make_button("Done", self.done_tapped)
+
+        for view in (
+            self.title_label,
+            self.big_caption,
+            self.big_control,
+            self.hints_label,
+            self.hints_switch,
+            self.new_board_button,
+            self.done_button,
+        ):
+            self.add_subview(view)
+
+    def layout(self):
+        column = min(320, self.width - 48)
+        left = (self.width - column) / 2
+
+        y = self.TOP
+        self.title_label.frame = (left, y, column, 36)
+        y += 56
+        self.big_caption.frame = (left, y, column, 22)
+        y += 28
+        self.big_control.frame = (left, y, column, 40)
+        y += 64
+
+        switch_width = 51
+        self.hints_label.frame = (left, y, column - switch_width - 12, 44)
+        self.hints_switch.frame = (
+            left + column - switch_width, y + 6, switch_width, 31
+        )
+        y += 68
+        self.new_board_button.frame = (left, y, column, 52)
+        y += 68
+        self.done_button.frame = (left, y, column, 52)
+
+    def open(self):
+        self.draft = dict(self.screen.settings)
+        self.big_control.selected_index = rules.BIG_COUNT_CHOICES.index(
+            self.draft["big_count"]
+        )
+        self.hints_switch.value = bool(self.draft["hints"])
+        self.hidden = False
+        self.bring_to_front()
+
+    def big_count_changed(self, sender):
+        self.draft["big_count"] = rules.BIG_COUNT_CHOICES[sender.selected_index]
+
+    def hints_changed(self, sender):
+        self.draft["hints"] = bool(sender.value)
+
+    def new_board_tapped(self, sender):
+        if self.screen.apply_settings(self.draft, force_new_board=True):
+            self.hidden = True
+
+    def done_tapped(self, sender):
+        if self.screen.apply_settings(self.draft):
+            self.hidden = True
+
+
+# --- the screen -------------------------------------------------------------
+
+class CountdownScreen(ui.View):
+    """Countdown under the shell header: one target, board after board."""
+
+    SIDE_MARGIN = 16
+    BOTTOM_BAR = 112      # leaves room above the home indicator
+
+    def __init__(self, board, **kwargs):
+        super().__init__(**kwargs)
+        self.background_color = BACKGROUND
+        self.settings = load_settings()
+
+        # Header contract (gamecore/game.py). The shell replaces the callback.
+        self.header_subtitle = ""
+        self.on_header_changed = None
+
+        self.session = TargetSession()
+        self.round = None
+        self.started = None
+        self.solve_seconds = None
+        self.last_points = 0
+        self.note = None   # e.g. what the last skip scored
+
+        self.banner = TargetBanner()
+        self.banner.on_target_tapped = self.target_tapped
+
+        self.status_label = make_label("", ("AvenirNext-Medium", 15), MUTED)
+
+        self.board_view = MultipleMergeBoardView(board=board)
+        self.board_view.background_color = BACKGROUND
+        self.board_view.on_move_committed = self.move_committed
+
+        self.reset_button = make_button("Reset board", self.reset_tapped)
+        self.action_button = make_button("Skip", self.action_tapped)
+
+        self.settings_panel = SettingsPanel(self)
+
+        for view in (
+            self.banner,
+            self.status_label,
+            self.board_view,
+            self.reset_button,
+            self.action_button,
+            self.settings_panel,   # last, so it covers everything
+        ):
+            self.add_subview(view)
+
+        self.start_new_board()
+
+    # --- header contract -----------------------------------------------------
+
+    def open_settings(self):
+        """Called by the shell's gear."""
+        if self.board_view.resolving:
+            return
+        self.settings_panel.open()
+
+    def set_subtitle(self, text):
+        if text == self.header_subtitle:
+            return
+        self.header_subtitle = text
+        if callable(self.on_header_changed):
+            self.on_header_changed()
+
+    # --- layout --------------------------------------------------------------
+
+    def layout(self):
+        width = self.width
+        height = self.height
+        margin = self.SIDE_MARGIN
+
+        self.banner.frame = (margin, TOP_GAP, width - 2 * margin, TOP_AREA_HEIGHT)
+
+        status_top = TOP_GAP + TOP_AREA_HEIGHT + 8
+        self.status_label.frame = (margin, status_top, width - 2 * margin, 24)
+
+        board_top = status_top + 30
+        self.board_view.frame = (
+            0,
+            board_top,
+            width,
+            max(0, height - board_top - self.BOTTOM_BAR),
+        )
+
+        button_width = min(160, (width - 3 * margin) / 2)
+        y = height - self.BOTTOM_BAR + 16
+        self.reset_button.frame = (
+            width / 2 - button_width - 6, y, button_width, 48
+        )
+        self.action_button.frame = (width / 2 + 6, y, button_width, 48)
+
+        self.settings_panel.frame = self.bounds
+
+    def show_action(self, title, primary):
+        """Set the right-hand button; primary uses the accent colour."""
+        self.action_button.title = title
+        self.action_button.background_color = ACCENT if primary else BUTTON_COLOR
+        self.action_button.tint_color = BACKGROUND if primary else TEXT
+
+    # --- game flow -----------------------------------------------------------
+
+    def start_new_board(self):
+        """Deal a board for the current settings and show it.
+
+        Returns False, changing nothing, while a merge is animating.
+        """
+        round_ = rules.deal_round(self.settings["big_count"])
+
+        if not self.board_view.load_board_state(round_.starting_board()):
+            return False
+
+        self.round = round_
+        self.started = time.monotonic()
+        self.solve_seconds = None
+        self.last_points = 0
+        self.refresh()
+        return True
+
+    def refresh(self):
+        round_ = self.round
+        big = round_.big_count
+
+        self.set_subtitle("{} big · {} small".format(big, rules.TILE_COUNT - big))
+        self.banner.show(round_.target, self.session.score,
+                         self.session.streak, round_.solved)
+
+        if round_.solved:
+            text = "Solved in {}s · +{}".format(
+                int(round(self.solve_seconds)), self.last_points
+            )
+        elif round_.best is not None:
+            text = "Closest so far: {} ({} away)".format(
+                format_value(round_.best),
+                format_value(round_.best_distance()),
+            )
+        elif self.note:
+            text = self.note
+        else:
+            text = "Make {} from the six numbers".format(round_.target)
+
+        self.status_label.text = text
+
+        if round_.solved:
+            self.show_action("Next board", primary=True)
+        else:
+            self.show_action("Skip", primary=False)
+
+    def move_committed(self, result):
+        """Called by the board view for every committed move."""
+        self.note = None
+
+        if self.round.record(result.value):
+            self.solve_seconds = time.monotonic() - self.started
+            self.last_points = self.session.finish(self.round)
+
+        self.refresh()
+
+    def apply_settings(self, draft, force_new_board=False):
+        """Adopt draft settings and save them.
+
+        Deals a new board if the big-number count changed, or when forced.
+        Returns False, changing nothing, while a merge is animating.
+        """
+        previous = self.settings
+        needs_board = (
+            force_new_board or draft["big_count"] != previous["big_count"]
+        )
+
+        self.settings = dict(draft)
+
+        if needs_board and not self.start_new_board():
+            self.settings = previous
+            return False
+
+        if self.settings != previous:
+            save_settings(self.settings)
+
+        return True
+
+    # --- hints ---------------------------------------------------------------
+
+    def target_tapped(self, target):
+        """Hint the next step towards the target; nothing with hints off."""
+        if not self.settings["hints"] or self.round is None:
+            return
+
+        if self.round.solved:
+            self.status_label.text = "Solved! Tap Next board"
+            return
+
+        board = self.board_view.board_state
+        step = rules.next_hint_step(self.round, board)
+        cells = rules.cells_for_step(board, step) if step else None
+
+        if cells is None:
+            self.status_label.text = "No quick hint from here · Reset or undo"
+            return
+
+        outcome = self.board_view.hint_step(cells[0], step[1], cells[1])
+
+        if outcome == "shown":
+            self.status_label.text = "Hint: {} · tap again to play".format(
+                describe_step(step)
+            )
+        elif outcome == "played" and not self.round.solved:
+            self.status_label.text = "Tap {} again for the next step".format(
+                target
+            )
+
+    # --- buttons -------------------------------------------------------------
+
+    def reset_tapped(self, sender):
+        """Back to the starting numbers; the closest value so far is kept."""
+        if self.board_view.load_board_state(self.round.starting_board()):
+            self.refresh()
+
+    def action_tapped(self, sender):
+        """Next board after a solve; otherwise skip, scoring the closest."""
+        if self.board_view.resolving:
+            return
+
+        if self.round.solved:
+            note = None
+        else:
+            points = self.session.finish(self.round)
+            note = "Skipped {} · +{}".format(self.round.target, points)
+
+        previous_note = self.note
+        self.note = note
+
+        if not self.start_new_board():
+            self.note = previous_note

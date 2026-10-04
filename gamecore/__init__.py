@@ -1,0 +1,1 @@
+"""Shared game machinery for Maths Games: the game contract and catalogue."""

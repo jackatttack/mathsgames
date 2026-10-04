@@ -1,0 +1,1 @@
+"""Maths Games touch feel: press, release and haptics shared by every game."""
