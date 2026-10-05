@@ -83,6 +83,12 @@ class ChoiceRow(ui.View):
             if button.title != label:
                 button.title = label
 
+    def set_enabled(self, flags):
+        """Enable or disable buttons in place; disabled ones fade and ignore taps."""
+        for button, enabled in zip(self.buttons, flags):
+            button.enabled = bool(enabled)
+            button.alpha = 1.0 if enabled else 0.35
+
     @property
     def selected_index(self):
         return self._selected_index
@@ -116,6 +122,66 @@ class ChoiceRow(ui.View):
             return
 
         self.selected_index = index
+
+        if self.action is not None:
+            self.action(self)
+
+
+class ToggleRow(ui.View):
+    """A row of buttons where any number can be on.
+
+    Interface: selected_indices (a set), action(sender) called after each
+    change, and an optional allow(new_indices) that may refuse a change,
+    for example to keep at least one option on.
+    """
+
+    GAP = 6
+
+    def __init__(self, labels, action, allow=None):
+        super().__init__()
+        self.action = action
+        self.allow = allow
+        self._selected = set()
+        self.buttons = []
+
+        for label in labels:
+            button = make_button(label, self._button_tapped, font_size=17)
+            button.corner_radius = 9
+            self.buttons.append(button)
+            self.add_subview(button)
+
+        self._show_selection()
+
+    @property
+    def selected_indices(self):
+        return set(self._selected)
+
+    @selected_indices.setter
+    def selected_indices(self, indices):
+        self._selected = set(indices)
+        self._show_selection()
+
+    def layout(self):
+        count = len(self.buttons)
+        width = (self.width - self.GAP * (count - 1)) / count
+
+        for index, button in enumerate(self.buttons):
+            button.frame = (index * (width + self.GAP), 0, width, self.height)
+
+    def _show_selection(self):
+        for index, button in enumerate(self.buttons):
+            on = index in self._selected
+            button.background_color = ACCENT if on else BUTTON_COLOR
+            button.tint_color = BACKGROUND if on else TEXT
+
+    def _button_tapped(self, sender):
+        index = self.buttons.index(sender)
+        new_indices = self._selected ^ {index}
+
+        if self.allow is not None and not self.allow(set(new_indices)):
+            return
+
+        self.selected_indices = new_indices
 
         if self.action is not None:
             self.action(self)

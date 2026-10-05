@@ -1,0 +1,1 @@
+"""KenKen for Maths Games: fill a Latin square that satisfies every cage."""

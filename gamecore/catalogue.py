@@ -27,4 +27,22 @@ GAMES = (
         entry="games.countdown.entry:create_view",
         status="playable",
     ),
+    GameInfo(
+        game_id="kenken",
+        title="KenKen",
+        tagline="Fill the grid so every cage makes its target",
+        icon="12×",
+        accent="mint",
+        entry="games.kenken.entry:create_view",
+        status="playable",
+    ),
+    GameInfo(
+        game_id="sudoku",
+        title="Sudoku",
+        tagline="Every row, column and box holds each number once",
+        icon="9",
+        accent="violet",
+        entry="games.sudoku.entry:create_view",
+        status="in development",
+    ),
 )

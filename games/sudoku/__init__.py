@@ -1,0 +1,1 @@
+"""Sudoku for Maths Games: every row, column and box holds each number once."""

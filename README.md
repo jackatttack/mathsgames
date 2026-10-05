@@ -51,8 +51,31 @@ Play is a timed run of five boards. Skipping adds a penalty you set in
 Settings, and your best time for each set of rules is kept and shown at the
 start of every run.
 
-Both games have optional hints (in Settings): tap the target to see the
-next step, tap again to play it. Double-tap empty board to undo.
+Both have optional hints (in Settings): tap the target to see the next
+step, tap again to play it. Double-tap empty board to undo.
+
+### KenKen
+
+Fill the grid so every row and column holds 1 to N once, and every cage
+makes its target with its operation: 12× means the cage multiplies to 12,
+and − and ÷ cages have two cells, read larger first. Tap a cell to open the
+number picker beside it. In Settings choose the board size (3×3 to 6×6)
+and the operations: + or × is always on, − and ÷ are optional. Mistakes can
+be shown as you play, and numbers already in the row or column can be
+dimmed in the picker.
+
+### Sudoku
+
+Every row, column and box holds each number once, on 4×4, 6×6 or 9×9
+boards. Difficulty is graded by the techniques a puzzle needs rather than
+by counting clues: Easy needs only cells with one possible number, Medium
+needs numbers with only one possible place, and Hard needs pairs and
+pointing. Smaller boards go up only to the levels they can reach. Turn on
+Notes in the picker to pencil in candidates; placing a number can tidy
+that number away from notes in its row, column and box.
+
+Every KenKen and Sudoku puzzle has exactly one solution. Both have Undo,
+and a solved board shows your time.
 
 ## Updating
 
@@ -71,7 +94,8 @@ Every game is a folder in `games/` plus one line in
     launcher/              home screen, shared header, app shell
     gamecore/              game contract and catalogue
     games/                 one folder per game
-    tilegame/              shared tile board, rules, widgets and scoring
+    tilegame/              shared tile board, fill-in grid, number picker,
+                           rules, widgets and scoring
     tilekit/               the TileKit board engine
     style/                 colours, fonts, layout tokens
     feel/                  touch feedback and haptics
