@@ -16,7 +16,9 @@ Board styles:
 Difficulty comes from the solver. For every value a board can produce,
 analyse_routes counts how many move sequences end by making it, and the
 fewest moves any of them needs. DIFFICULTY_RULES turns those two numbers
-into easy, medium and hard. Same-number boards rank their own targets by
+into easy, medium and hard. Tricky keeps only targets that every route
+reaches through a negative or a fraction (see is_tricky_value), the moves
+players find hardest to spot. Same-number boards rank their own targets by
 rarity instead (see RELATIVE_DIFFICULTY_STYLES).
 """
 
@@ -37,7 +39,7 @@ from .classic import BOARD_COLS, BOARD_ROWS, merge_pairs
 
 # --- editable settings ------------------------------------------------------
 
-DIFFICULTIES = ("easy", "medium", "hard")
+DIFFICULTIES = ("easy", "medium", "hard", "tricky")
 BOARD_STYLES = ("mixed", "same", "three_plus_one")
 
 DEFAULT_DIFFICULTY = "medium"
@@ -50,12 +52,18 @@ DIFFICULTY_RULES = {
     "easy":   {"routes": (4, None), "shortest": (1, 2)},
     "medium": {"routes": (2, 6),    "shortest": (2, 3)},
     "hard":   {"routes": (1, 2),    "shortest": (3, 3)},
+    # Only targets that every route reaches through a negative or a fraction.
+    "tricky": {"routes": (1, None), "shortest": (2, 3), "tricky_only": True},
 }
 
 # Four identical tiles reach every value by many mirror-image routes, so
 # absolute route counts never look rare. These styles rank the board's own
 # targets instead: hard from the rarest third, easy from the commonest.
 RELATIVE_DIFFICULTY_STYLES = ("same",)
+
+# Four identical tiles almost never have a target that needs a negative or
+# a fraction (smoke 2026-10-05: 0 of 3 deals), so tricky deals hard there.
+TRICKY_UNSUPPORTED_STYLES = ("same",)
 TARGET_RANGE = (10, 200)          # targets are whole numbers in this range
 STARTING_NUMBER_RANGE = (1, 12)   # mixed boards, and the odd one out in 3 + 1
 SAME_NUMBER_RANGE = (2, 9)        # the repeated number on same and 3 + 1
@@ -70,17 +78,29 @@ MAX_DEAL_SECONDS = 1.0
 
 # --- route analysis ---------------------------------------------------------
 
-def analyse_routes(board):
-    """Return {value: [route_count, shortest]} for every producible value.
 
-    route_count is how many move sequences end with a move that makes the
-    value; shortest is the fewest moves any of them uses. Exhaustive
-    depth-first search; the board passed in is never changed.
+def is_tricky_value(value):
+    """True for a negative or a fraction, the values players rarely look for.
+
+    Zero counts as plain: 3 - 3 = 0 is easy to spot.
+    """
+    return value < 0 or value.denominator != 1
+
+
+def analyse_routes(board):
+    """Return {value: [route_count, shortest, plain_route_count]}.
+
+    One entry for every producible value. route_count is how many move
+    sequences end with a move that makes the value; shortest is the fewest
+    moves any of them uses; plain_route_count is how many of those
+    sequences never made a tricky value (see is_tricky_value) on the way.
+    A plain_route_count of 0 means a negative or a fraction is unavoidable.
+    Exhaustive depth-first search; the board passed in is never changed.
     """
     stats = {}
     position = board.copy_with(board.snapshot())
 
-    def explore(depth):
+    def explore(depth, passed_trick):
         for source, destination in merge_pairs(position):
             for operation in OPERATIONS:
                 result = position.apply_move(source, operation, destination)
@@ -88,17 +108,20 @@ def analyse_routes(board):
                 if result is None:
                     continue
 
+                plain = 0 if passed_trick else 1
                 entry = stats.get(result.value)
                 if entry is None:
-                    stats[result.value] = [1, depth]
+                    stats[result.value] = [1, depth, plain]
                 else:
                     entry[0] += 1
                     entry[1] = min(entry[1], depth)
+                    entry[2] += plain
 
-                explore(depth + 1)
+                explore(depth + 1,
+                        passed_trick or is_tricky_value(result.value))
                 position.undo()
 
-    explore(1)
+    explore(1, False)
     return stats
 
 
@@ -108,11 +131,14 @@ def _within(number, bounds):
 
 
 def targets_matching(stats, on_board, rule=None):
-    """Whole-number targets in TARGET_RANGE, not on the board, meeting rule."""
+    """Whole-number targets in TARGET_RANGE, not on the board, meeting rule.
+
+    A rule with tricky_only also drops any target a plain route makes.
+    """
     low, high = TARGET_RANGE
     matches = []
 
-    for value, (routes, shortest) in stats.items():
+    for value, (routes, shortest, plain_routes) in stats.items():
         if value.denominator != 1:
             continue
 
@@ -121,11 +147,15 @@ def targets_matching(stats, on_board, rule=None):
         if not low <= whole <= high or whole in on_board:
             continue
 
-        if rule is not None and not (
-            _within(routes, rule["routes"])
-            and _within(shortest, rule["shortest"])
-        ):
-            continue
+        if rule is not None:
+            if not (
+                _within(routes, rule["routes"])
+                and _within(shortest, rule["shortest"])
+            ):
+                continue
+
+            if rule.get("tricky_only") and plain_routes:
+                continue
 
         matches.append(whole)
 
@@ -161,7 +191,7 @@ class TargetRound(SharedTargetRound):
     """A Target-mode board: the shared round plus how it was dealt."""
 
     def __init__(self, starting_rows, target, routes, shortest, difficulty,
-                 style, matched=True, attempts=1):
+                 style, matched=True, attempts=1, plain_routes=None):
         super().__init__(starting_rows, target)
         self.routes = routes
         self.shortest = shortest
@@ -169,6 +199,7 @@ class TargetRound(SharedTargetRound):
         self.style = style
         self.matched = matched      # False when dealing fell back
         self.attempts = attempts
+        self.plain_routes = plain_routes  # 0: needs a negative or fraction
 
 
 def ranked_target(stats, on_board, difficulty, rng):
@@ -176,15 +207,19 @@ def ranked_target(stats, on_board, difficulty, rng):
 
     Targets are ordered rarest first (fewest routes, then most moves).
     Hard picks from the rarest third, easy from the commonest third,
-    medium from the middle.
+    medium from the middle. Tricky picks from targets no plain route makes.
     """
     targets = targets_matching(stats, on_board)
+
+    if difficulty == "tricky":
+        tricky = [t for t in targets if not stats[Fraction(t)][2]]
+        return rng.choice(tricky) if tricky else None
 
     if not targets:
         return None
 
     def rarity(target):
-        routes, shortest = stats[Fraction(target)]
+        routes, shortest, _plain_routes = stats[Fraction(target)]
         return (routes, -shortest, target)
 
     ordered = sorted(targets, key=rarity)
@@ -210,6 +245,10 @@ def deal_target_round(difficulty=DEFAULT_DIFFICULTY,
     round.matched is False.
     """
     rng = rng or random.Random()
+
+    if difficulty == "tricky" and style in TRICKY_UNSUPPORTED_STYLES:
+        difficulty = "hard"
+
     rule = DIFFICULTY_RULES[difficulty]
     deadline = clock() + MAX_DEAL_SECONDS
     fallback = None
@@ -228,9 +267,9 @@ def deal_target_round(difficulty=DEFAULT_DIFFICULTY,
             target = rng.choice(candidates) if candidates else None
 
         if target is not None:
-            routes, shortest = stats[Fraction(target)]
+            routes, shortest, plain_routes = stats[Fraction(target)]
             return TargetRound(rows, target, routes, shortest, difficulty,
-                               style, True, attempts)
+                               style, True, attempts, plain_routes)
 
         if fallback is None:
             loose = targets_matching(stats, on_board)
@@ -244,9 +283,9 @@ def deal_target_round(difficulty=DEFAULT_DIFFICULTY,
 
     rows, stats, loose = fallback
     target = rng.choice(loose)
-    routes, shortest = stats[Fraction(target)]
+    routes, shortest, plain_routes = stats[Fraction(target)]
     return TargetRound(rows, target, routes, shortest, difficulty, style,
-                       False, attempts)
+                       False, attempts, plain_routes)
 
 
 # --- scoring ----------------------------------------------------------------

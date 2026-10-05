@@ -61,9 +61,11 @@ class ChoiceRow(ui.View):
 
     GAP = 6
 
-    def __init__(self, labels, action):
+    def __init__(self, labels, action, selected_colors=None):
         super().__init__()
         self.action = action
+        # One colour per button for the chosen state, or None for ACCENT.
+        self.selected_colors = selected_colors
         self._selected_index = 0
         self.buttons = []
 
@@ -74,6 +76,12 @@ class ChoiceRow(ui.View):
             self.add_subview(button)
 
         self._show_selection()
+
+    def set_labels(self, labels):
+        """Retitle the buttons in place, e.g. to show scores."""
+        for button, label in zip(self.buttons, labels):
+            if button.title != label:
+                button.title = label
 
     @property
     def selected_index(self):
@@ -94,7 +102,11 @@ class ChoiceRow(ui.View):
     def _show_selection(self):
         for index, button in enumerate(self.buttons):
             chosen = index == self._selected_index
-            button.background_color = ACCENT if chosen else BUTTON_COLOR
+            if self.selected_colors:
+                chosen_color = self.selected_colors[index]
+            else:
+                chosen_color = ACCENT
+            button.background_color = chosen_color if chosen else BUTTON_COLOR
             button.tint_color = BACKGROUND if chosen else TEXT
 
     def _button_tapped(self, sender):
@@ -110,7 +122,8 @@ class ChoiceRow(ui.View):
 
 
 class TargetBanner(ui.View):
-    """A big target chip with score and streak either side.
+    """A big target chip with two stats either side (score and streak, or
+    board and time).
 
     A tap on the chip calls on_target_tapped(target), set by the screen.
     """
@@ -123,13 +136,22 @@ class TargetBanner(ui.View):
         self.target = None
         self.score = 0
         self.streak = 0
+        self.left = ("SCORE", 0)     # (caption, value) drawn left of the chip
+        self.right = ("STREAK", 0)   # and right of it
         self.solved = False
         self.on_target_tapped = None
 
     def show(self, target, score, streak, solved):
-        self.target = target
+        """Target with score and streak either side."""
         self.score = score
         self.streak = streak
+        self.show_stats(target, ("SCORE", score), ("STREAK", streak), solved)
+
+    def show_stats(self, target, left, right, solved):
+        """Target with any two (caption, value) stats either side."""
+        self.target = target
+        self.left = left
+        self.right = right
         self.solved = solved
         self.set_needs_display()
 
@@ -141,9 +163,11 @@ class TargetBanner(ui.View):
         return ((self.width - width) / 2, 0, width, self.height)
 
     def _draw_stat(self, caption, value, x, width):
+        text = str(value)
+        size = max(16, min(30, width * 1.6 / max(1, len(text))))
         draw_centred_text(caption, ("AvenirNext-DemiBold", 12), MUTED,
                           x, 14, width, 18)
-        draw_centred_text(str(value), ("AvenirNext-Bold", 30), TEXT,
+        draw_centred_text(text, ("AvenirNext-Bold", size), TEXT,
                           x, 34, width, self.height - 44)
 
     def draw(self):
@@ -163,8 +187,9 @@ class TargetBanner(ui.View):
         draw_centred_text(str(self.target), ("AvenirNext-Bold", size),
                           BACKGROUND, x, y + 20, w, h - 24)
 
-        self._draw_stat("SCORE", self.score, 0, x)
-        self._draw_stat("STREAK", self.streak, x + w, self.width - (x + w))
+        self._draw_stat(self.left[0], self.left[1], 0, x)
+        self._draw_stat(self.right[0], self.right[1], x + w,
+                        self.width - (x + w))
 
     def touch_ended(self, touch):
         if self.target is None or self.on_target_tapped is None:

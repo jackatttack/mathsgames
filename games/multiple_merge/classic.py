@@ -167,14 +167,16 @@ class ClassicRound:
         self.reachable = set(reachable)
         self.attempts = attempts
         self.found = set()
+        self.found_by = {}   # target -> player index, two-player games only
 
     def starting_board(self):
         """A fresh BoardState holding the dealt numbers."""
         return BoardState(self.starting_rows)
 
-    def record(self, value):
+    def record(self, value, player=None):
         """Mark value found if it is an unfound target.
 
+        player is the active player's index in a two-player game, else None.
         Returns True only when this value newly completes a target.
         """
         value = Fraction(value)
@@ -188,6 +190,10 @@ class ClassicRound:
             return False
 
         self.found.add(whole)
+
+        if player is not None:
+            self.found_by[whole] = player
+
         return True
 
     def is_complete(self):

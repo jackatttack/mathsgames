@@ -36,6 +36,7 @@ from style import theme
 from . import classic
 from . import target_mode
 from tilegame.board_state import format_value
+from tilegame.records import RecordBook, format_duration, record_key
 from tilegame.ui import MultipleMergeBoardView
 from tilegame.widgets import (
     ChoiceRow,
@@ -58,24 +59,32 @@ CHIP_UNREACHABLE = theme.color("chip_disabled")
 CHIP_UNREACHABLE_TEXT = theme.color("chip_disabled_text")
 CHIP_OPEN = theme.color("button")            # makeable, not found yet
 CHIP_FOUND = theme.color("success")          # found, or target mode solved
+PLAYER_COLORS = (theme.color("player_one"), theme.color("player_two"))
 
 # --- editable layout, in points ---------------------------------------------
 
 TOP_GAP = 8           # space below the shell's header
 TOP_AREA_HEIGHT = 96  # classic rail (two rows) or target banner
+PLAYER_ROW_HEIGHT = 40  # two-player name buttons above the board
 
 # --- modes and their labels -------------------------------------------------
 
 MODES = ("classic", "target")
 MODE_LABELS = ("Classic", "Target")
-DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")        # target_mode.DIFFICULTIES
+DIFFICULTY_LABELS = ("Easy", "Medium", "Hard", "Tricky")  # target_mode.DIFFICULTIES
 BOARD_STYLE_LABELS = ("Mixed", "Same", "3 + 1")       # target_mode.BOARD_STYLES
+
+# Classic two-player: tap your name, then merge; the target is yours.
+PLAYER_COUNTS = (1, 2)
+PLAYER_COUNT_LABELS = ("Solo", "2 players")
+PLAYER_NAMES = ("Player 1", "Player 2")
 
 
 # --- saved settings ---------------------------------------------------------
 
 GAME_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
+RECORDS_PATH = os.path.join(GAME_DIR, "records.json")
 
 DEFAULT_SETTINGS = {
     "mode": "classic",
@@ -83,6 +92,7 @@ DEFAULT_SETTINGS = {
     "hints": False,
     "difficulty": target_mode.DEFAULT_DIFFICULTY,
     "board_style": target_mode.DEFAULT_BOARD_STYLE,
+    "players": 1,
 }
 
 VALID_CHOICES = {
@@ -90,6 +100,7 @@ VALID_CHOICES = {
     "multiple": classic.MULTIPLE_CHOICES,
     "difficulty": target_mode.DIFFICULTIES,
     "board_style": target_mode.BOARD_STYLES,
+    "players": PLAYER_COUNTS,
 }
 
 
@@ -187,9 +198,13 @@ class TargetRail(ui.View):
         return frames
 
     @staticmethod
+    @staticmethod
     def _colours_for(target, round_):
         if target in round_.found:
-            return CHIP_FOUND, BACKGROUND
+            player = round_.found_by.get(target)
+            if player is None:
+                return CHIP_FOUND, BACKGROUND
+            return PLAYER_COLORS[player], BACKGROUND
         if target in round_.reachable:
             return CHIP_OPEN, TEXT
         return CHIP_UNREACHABLE, CHIP_UNREACHABLE_TEXT
@@ -240,15 +255,48 @@ class ClassicController:
     def __init__(self, screen):
         self.screen = screen
         self.round = None
+        self.started = None   # when this board was dealt
+        self.result = None    # RunResult once every makeable target is found
+        self.active_player = 0   # two-player: whose merges count, sticky
+
+    @property
+    def two_players(self):
+        return self.screen.settings.get("players") == 2
+
+    def scores(self):
+        """Targets found by each player on this board."""
+        scores = [0] * len(PLAYER_NAMES)
+        for player in self.round.found_by.values():
+            scores[player] += 1
+        return scores    # RunResult once every makeable target is found
 
     def new_round(self):
         return classic.deal_round(self.screen.settings["multiple"])
 
     def begin(self, round_):
         self.round = round_
+        self.started = time.monotonic()
+        self.result = None
+
+    def record_key(self):
+        """Times compare only for the same multiple and number of targets."""
+        round_ = self.round
+        return record_key(
+            "multiple_merge", "classic",
+            "x{}".format(round_.multiple),
+            "targets-{}".format(len(round_.reachable)),
+        )
 
     def move_committed(self, result):
-        self.round.record(result.value)
+        round_ = self.round
+        player = self.active_player if self.two_players else None
+        newly_found = round_.record(result.value, player)
+
+        # Solo only: the clock stops at the tap that finds the last target.
+        if (newly_found and round_.is_complete() and self.result is None
+                and not self.two_players):
+            seconds = time.monotonic() - self.started
+            self.result = self.screen.records.add(self.record_key(), seconds)
 
     def hint_blocker(self, target):
         """A reason no hint can be given for target, or None."""
@@ -264,18 +312,62 @@ class ClassicController:
         round_ = self.round
         makeable = len(round_.reachable)
 
-        screen.set_subtitle("Classic · multiples of {}".format(round_.multiple))
         screen.rail.show_round(round_)
 
-        if round_.is_complete():
-            screen.status_label.text = "All {} found!".format(makeable)
+        if self.two_players:
+            screen.set_subtitle("2 players · multiples of {}".format(round_.multiple))
+            scores = self.scores()
+            screen.player_row.set_labels([
+                "{} · {}".format(name, score)
+                for name, score in zip(PLAYER_NAMES, scores)
+            ])
+            screen.player_row.selected_index = self.active_player
+            screen.status_label.text = self.describe_two_players(scores, makeable)
         else:
-            screen.status_label.text = "{} of {} found".format(
-                len(round_.found), makeable
-            )
+            screen.set_subtitle("Classic · multiples of {}".format(round_.multiple))
+            if round_.is_complete():
+                screen.status_label.text = self.describe_result(makeable)
+            else:
+                text = "{} of {} found · {}".format(
+                    len(round_.found), makeable,
+                    format_duration(time.monotonic() - self.started),
+                )
+                best = screen.records.best(self.record_key())
+                if best is not None:
+                    text += " · best {}".format(format_duration(best))
+                screen.status_label.text = text
 
         screen.show_action("New board", visible=round_.is_complete(),
                            primary=True)
+
+    def describe_two_players(self, scores, makeable):
+        if not self.round.is_complete():
+            return "{} of {} found · tap your name, then merge".format(
+                len(self.round.found), makeable)
+
+        first, second = scores
+        if first == second:
+            return "Draw {}–{}".format(first, second)
+
+        winner = 0 if first > second else 1
+        return "{} wins {}–{}".format(
+            PLAYER_NAMES[winner], max(scores), min(scores))
+
+    def describe_result(self, makeable):
+        result = self.result
+
+        if result is None:      # completed without a timed finish
+            return "All {} found!".format(makeable)
+
+        time_text = format_duration(result.seconds)
+
+        if result.previous_best is None:
+            return "All {} found in {} · first time".format(makeable, time_text)
+        if result.is_best:
+            return "All {} found in {} · New best! Was {}".format(
+                makeable, time_text, format_duration(result.previous_best))
+        return "All {} found in {} · Best {}".format(
+            makeable, time_text, format_duration(result.previous_best))
 
     def action_tapped(self):
         self.screen.start_new_board()
@@ -382,7 +474,7 @@ class SettingsPanel(ui.View):
     hints changed). New board adopts it and always deals.
     """
 
-    SECTION_HEIGHT = 140
+    SECTION_HEIGHT = 230   # the taller of the two sections: Classic
     TOP = 16
 
     def __init__(self, screen):
@@ -405,6 +497,12 @@ class SettingsPanel(ui.View):
         self.multiple_label = make_label("", ("AvenirNext-Bold", 40), TEXT)
         self.plus_button = make_button("+", self.step_up, font_size=28)
         self.preview_label = make_label("", ("AvenirNext-Medium", 14), MUTED)
+        self.players_caption = make_label(
+            "Players", ("AvenirNext-Medium", 15), MUTED
+        )
+        self.players_control = ChoiceRow(
+            PLAYER_COUNT_LABELS, self.players_changed
+        )
 
         # Target section.
         self.difficulty_caption = make_label(
@@ -441,6 +539,8 @@ class SettingsPanel(ui.View):
             self.multiple_label,
             self.plus_button,
             self.preview_label,
+            self.players_caption,
+            self.players_control,
         )
         self.target_views = (
             self.difficulty_caption,
@@ -478,6 +578,10 @@ class SettingsPanel(ui.View):
         self.plus_button.frame = (left + column - step, y, step, step)
         y += step + 8
         self.preview_label.frame = (left, y, column, 22)
+        y += 34
+        self.players_caption.frame = (left, y, column, 22)
+        y += 28
+        self.players_control.frame = (left, y, column, 36)
 
         # Target section, in the same space.
         y = section_top
@@ -511,6 +615,9 @@ class SettingsPanel(ui.View):
         )
         self.style_control.selected_index = (
             target_mode.BOARD_STYLES.index(draft["board_style"])
+        )
+        self.players_control.selected_index = PLAYER_COUNTS.index(
+            draft["players"]
         )
         self.hints_switch.value = bool(draft["hints"])
 
@@ -564,6 +671,9 @@ class SettingsPanel(ui.View):
     def style_changed(self, sender):
         self.draft["board_style"] = target_mode.BOARD_STYLES[sender.selected_index]
 
+    def players_changed(self, sender):
+        self.draft["players"] = PLAYER_COUNTS[sender.selected_index]
+
     def hints_changed(self, sender):
         self.draft["hints"] = bool(sender.value)
 
@@ -588,6 +698,7 @@ class GameScreen(ui.View):
         super().__init__(**kwargs)
         self.background_color = BACKGROUND
         self.settings = load_settings()
+        self.records = RecordBook(RECORDS_PATH)
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
@@ -606,6 +717,12 @@ class GameScreen(ui.View):
 
         self.status_label = make_label("", ("AvenirNext-Medium", 15), MUTED)
 
+        # Two-player Classic: tap your name before merging. Sticky.
+        self.player_row = ChoiceRow(
+            PLAYER_NAMES, self.player_changed, selected_colors=PLAYER_COLORS
+        )
+        self.player_row.hidden = True
+
         self.board_view = MultipleMergeBoardView(board=board)
         self.board_view.background_color = BACKGROUND
         self.board_view.on_move_committed = self.move_committed
@@ -620,6 +737,7 @@ class GameScreen(ui.View):
             self.rail,
             self.banner,
             self.status_label,
+            self.player_row,
             self.board_view,
             self.reset_button,
             self.action_button,
@@ -650,6 +768,10 @@ class GameScreen(ui.View):
 
     # --- layout --------------------------------------------------------------
 
+    def shows_player_row(self):
+        return (self.settings["mode"] == "classic"
+                and self.settings["players"] == 2)
+
     def layout(self):
         width = self.width
         height = self.height
@@ -664,6 +786,15 @@ class GameScreen(ui.View):
         self.status_label.frame = (margin, status_top, width - 2 * margin, 24)
 
         board_top = status_top + 30
+
+        # Two-player Classic puts the name buttons between status and board.
+        self.player_row.hidden = not self.shows_player_row()
+        if not self.player_row.hidden:
+            self.player_row.frame = (
+                margin, board_top, width - 2 * margin, PLAYER_ROW_HEIGHT
+            )
+            board_top += PLAYER_ROW_HEIGHT + 8
+
         self.board_view.frame = (
             0,
             board_top,
@@ -730,11 +861,16 @@ class GameScreen(ui.View):
         self.controller.move_committed(result)
         self.refresh()
 
+    def player_changed(self, sender):
+        """A player taps their name: later merges count for them."""
+        self.controllers["classic"].active_player = sender.selected_index
+
     def apply_settings(self, draft, force_new_board=False):
         """Adopt draft settings and save them.
 
         Deals a new board if anything other than hints changed, or when
-        forced. Returns False, changing nothing, while a merge is animating.
+        forced. Lays out again when the player row appears or goes.
+        Returns False, changing nothing, while a merge is animating.
         """
         previous = self.settings
         needs_board = force_new_board or any(
@@ -749,6 +885,9 @@ class GameScreen(ui.View):
 
         if self.settings != previous:
             save_settings(self.settings)
+
+        if any(draft[key] != previous[key] for key in ("mode", "players")):
+            self.layout()
 
         return True
 

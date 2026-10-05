@@ -35,6 +35,10 @@ COLORS = {
     "success": "#5ED3A2",              # a found target or a solved board
     "chip_disabled": "#161D30",        # a target this board cannot make
     "chip_disabled_text": "#4A5470",
+
+    # Two-player games: each player's buttons and found targets
+    "player_one": "#7CB7FF",
+    "player_two": "#F28B82",
 }
 
 

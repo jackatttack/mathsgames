@@ -6,9 +6,11 @@ header_subtitle describes the deal ("1 big · 5 small").
 
 Play: any two tiles merge with + − × ÷; results must be positive whole
 numbers (the board's rules enforce this, and only legal destinations light
-up). Making the target solves the board: 10 points, the streak grows and the
-solve time is shown. Skip scores the closest value so far (within 5 scores 7,
-within 10 scores 5) and resets the streak. There is no clock.
+up). Play is a timed run of RUN_BOARDS boards: the banner shows the board
+number and the run time, which updates on every move rather than ticking.
+Skip moves on and adds the skip penalty from Settings. A finished run is
+stored in records.json under its rules (difficulty, big numbers, penalty),
+and a new run shows the best time for those rules.
 
 Hints (a setting, off by default): tap the target. The first tap shows the
 next step of a shortest route from the current board, armed on the tiles;
@@ -27,7 +29,8 @@ import ui
 
 from style import theme
 from tilegame.board_state import OPERATION_SYMBOLS, format_value
-from tilegame.targets import TargetSession
+from tilegame.records import RecordBook, format_duration, record_key
+from tilegame.timed_run import TimedRun
 from tilegame.ui import MultipleMergeBoardView
 from tilegame.widgets import (
     ChoiceRow,
@@ -53,16 +56,35 @@ ACCENT = theme.color("tile")
 TOP_GAP = 8
 TOP_AREA_HEIGHT = 96
 
-BIG_COUNT_LABELS = tuple(str(count) for count in rules.BIG_COUNT_CHOICES)
+# The setting adds "random" (Mix) to the real counts; each board then
+# deals a random count and the subtitle shows the one dealt.
+BIG_COUNT_SETTINGS = rules.BIG_COUNT_CHOICES + (rules.RANDOM_BIG_COUNT,)
+BIG_COUNT_LABELS = (
+    tuple(str(count) for count in rules.BIG_COUNT_CHOICES) + ("Mix",)
+)
+DIFFICULTY_LABELS = ("Normal", "5 numbers", "All 6")  # rules.DIFFICULTY_CHOICES
+
+# --- timed runs -------------------------------------------------------------
+
+RUN_BOARDS = 5                        # boards in one timed run
+SKIP_PENALTY_CHOICES = (30, 60, 90)   # seconds a skip adds
+SKIP_PENALTY_LABELS = ("+30s", "+60s", "+90s")
+DEFAULT_SKIP_PENALTY = 60
+
+# Changing any of these starts a new run, since times no longer compare.
+RUN_RULE_KEYS = ("big_count", "difficulty", "skip_penalty")
 
 
 # --- saved settings ---------------------------------------------------------
 
 GAME_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
+RECORDS_PATH = os.path.join(GAME_DIR, "records.json")
 
 DEFAULT_SETTINGS = {
     "big_count": rules.DEFAULT_BIG_COUNT,
+    "difficulty": rules.DEFAULT_DIFFICULTY,
+    "skip_penalty": DEFAULT_SKIP_PENALTY,
     "hints": False,
     "show_factors": False,
 }
@@ -81,8 +103,14 @@ def load_settings():
     if not isinstance(saved, dict):
         return settings
 
-    if saved.get("big_count") in rules.BIG_COUNT_CHOICES:
+    if saved.get("big_count") in BIG_COUNT_SETTINGS:
         settings["big_count"] = saved["big_count"]
+
+    if saved.get("difficulty") in rules.DIFFICULTY_CHOICES:
+        settings["difficulty"] = saved["difficulty"]
+
+    if saved.get("skip_penalty") in SKIP_PENALTY_CHOICES:
+        settings["skip_penalty"] = saved["skip_penalty"]
 
     for key in ("hints", "show_factors"):
         if isinstance(saved.get(key), bool):
@@ -166,8 +194,8 @@ class FactorsCard(ui.View):
 class SettingsPanel(ui.View):
     """Overlay editing a draft of the settings, covering the game area.
 
-    Done adopts the draft (dealing a new board only if the big-number count
-    changed). New board adopts it and always deals.
+    Done adopts the draft, starting a new run only if a run rule changed
+    (RUN_RULE_KEYS). New board adopts it and always starts a new run.
     """
 
     TOP = 16
@@ -187,6 +215,21 @@ class SettingsPanel(ui.View):
         )
         self.big_control = ChoiceRow(BIG_COUNT_LABELS, self.big_count_changed)
 
+        self.difficulty_caption = make_label(
+            "Difficulty: fewest numbers a solution needs",
+            ("AvenirNext-Medium", 15), MUTED,
+        )
+        self.difficulty_control = ChoiceRow(
+            DIFFICULTY_LABELS, self.difficulty_changed
+        )
+
+        self.penalty_caption = make_label(
+            "Each skip adds to the run time", ("AvenirNext-Medium", 15), MUTED,
+        )
+        self.penalty_control = ChoiceRow(
+            SKIP_PENALTY_LABELS, self.penalty_changed
+        )
+
         self.hints_label = make_label(
             "Hints: tap the target to see the next step",
             ("AvenirNext-Medium", 15),
@@ -198,7 +241,7 @@ class SettingsPanel(ui.View):
         self.hints_switch.action = self.hints_changed
 
         self.new_board_button = make_button(
-            "New board", self.new_board_tapped,
+            "New run", self.new_board_tapped,
             background=ACCENT, title_color=BACKGROUND,
         )
         self.done_button = make_button("Done", self.done_tapped)
@@ -207,6 +250,10 @@ class SettingsPanel(ui.View):
             self.title_label,
             self.big_caption,
             self.big_control,
+            self.difficulty_caption,
+            self.difficulty_control,
+            self.penalty_caption,
+            self.penalty_control,
             self.hints_label,
             self.hints_switch,
             self.new_board_button,
@@ -224,6 +271,14 @@ class SettingsPanel(ui.View):
         self.big_caption.frame = (left, y, column, 22)
         y += 28
         self.big_control.frame = (left, y, column, 40)
+        y += 56
+        self.difficulty_caption.frame = (left, y, column, 22)
+        y += 28
+        self.difficulty_control.frame = (left, y, column, 40)
+        y += 56
+        self.penalty_caption.frame = (left, y, column, 22)
+        y += 28
+        self.penalty_control.frame = (left, y, column, 40)
         y += 64
 
         switch_width = 51
@@ -238,15 +293,27 @@ class SettingsPanel(ui.View):
 
     def open(self):
         self.draft = dict(self.screen.settings)
-        self.big_control.selected_index = rules.BIG_COUNT_CHOICES.index(
+        self.big_control.selected_index = BIG_COUNT_SETTINGS.index(
             self.draft["big_count"]
+        )
+        self.difficulty_control.selected_index = (
+            rules.DIFFICULTY_CHOICES.index(self.draft["difficulty"])
+        )
+        self.penalty_control.selected_index = (
+            SKIP_PENALTY_CHOICES.index(self.draft["skip_penalty"])
         )
         self.hints_switch.value = bool(self.draft["hints"])
         self.hidden = False
         self.bring_to_front()
 
     def big_count_changed(self, sender):
-        self.draft["big_count"] = rules.BIG_COUNT_CHOICES[sender.selected_index]
+        self.draft["big_count"] = BIG_COUNT_SETTINGS[sender.selected_index]
+
+    def difficulty_changed(self, sender):
+        self.draft["difficulty"] = rules.DIFFICULTY_CHOICES[sender.selected_index]
+
+    def penalty_changed(self, sender):
+        self.draft["skip_penalty"] = SKIP_PENALTY_CHOICES[sender.selected_index]
 
     def hints_changed(self, sender):
         self.draft["hints"] = bool(sender.value)
@@ -273,17 +340,19 @@ class CountdownScreen(ui.View):
         super().__init__(**kwargs)
         self.background_color = BACKGROUND
         self.settings = load_settings()
+        self.records = RecordBook(RECORDS_PATH)
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
         self.on_header_changed = None
 
-        self.session = TargetSession()
+        self.run = None          # TimedRun for the current RUN_BOARDS boards
+        self.run_key = None      # records key, fixed when the run starts
+        self.run_result = None   # RunResult once the run is finished
         self.round = None
-        self.started = None
+        self.started = None      # when this board was dealt
         self.solve_seconds = None
-        self.last_points = 0
-        self.note = None   # e.g. what the last skip scored
+        self.note = None   # e.g. the best for these rules, or a skip's cost
 
         self.banner = TargetBanner()
         self.banner.on_target_tapped = self.target_tapped
@@ -314,7 +383,7 @@ class CountdownScreen(ui.View):
         ):
             self.add_subview(view)
 
-        self.start_new_board()
+        self.start_new_run()
 
     # --- header contract -----------------------------------------------------
 
@@ -388,12 +457,67 @@ class CountdownScreen(ui.View):
 
     # --- game flow -----------------------------------------------------------
 
+    def current_record_key(self):
+        """The records key for the current settings' run rules."""
+        settings = self.settings
+        big = settings["big_count"]
+        big_part = "mix" if big == rules.RANDOM_BIG_COUNT else "big-{}".format(big)
+        return record_key(
+            "countdown",
+            "boards-{}".format(RUN_BOARDS),
+            settings["difficulty"],
+            big_part,
+            "skip-{}".format(settings["skip_penalty"]),
+        )
+
+    def start_new_run(self):
+        """Start a timed run on a fresh board, showing the best for its rules.
+
+        Returns False, changing nothing, while a merge is animating.
+        """
+        previous = (self.run, self.run_key, self.run_result, self.note)
+
+        self.run = TimedRun(RUN_BOARDS, self.settings["skip_penalty"])
+        self.run_key = self.current_record_key()
+        self.run_result = None
+
+        best = self.records.best(self.run_key)
+        self.note = (
+            "Best for these rules: {}".format(format_duration(best))
+            if best is not None else None
+        )
+
+        if not self.start_new_board():
+            self.run, self.run_key, self.run_result, self.note = previous
+            return False
+
+        return True
+
+    def finish_run(self):
+        """Store the finished run's time. Called once, inside the final tap."""
+        self.run_result = self.records.add(self.run_key, self.run.elapsed())
+
+    def describe_result(self):
+        result = self.run_result
+        time_text = format_duration(result.seconds)
+
+        if result.previous_best is None:
+            return "Run {} · first time for these rules".format(time_text)
+        if result.is_best:
+            return "Run {} · New best! Was {}".format(
+                time_text, format_duration(result.previous_best))
+        return "Run {} · Best {}".format(
+            time_text, format_duration(result.previous_best))
+
     def start_new_board(self):
         """Deal a board for the current settings and show it.
 
         Returns False, changing nothing, while a merge is animating.
         """
-        round_ = rules.deal_round(self.settings["big_count"])
+        round_ = rules.deal_round(
+            self.settings["big_count"],
+            difficulty=self.settings["difficulty"],
+        )
 
         if not self.board_view.load_board_state(round_.starting_board()):
             return False
@@ -407,16 +531,21 @@ class CountdownScreen(ui.View):
 
     def refresh(self):
         round_ = self.round
+        run = self.run
         big = round_.big_count
 
         self.set_subtitle("{} big · {} small".format(big, rules.TILE_COUNT - big))
-        self.banner.show(round_.target, self.session.score,
-                         self.session.streak, round_.solved)
+        self.banner.show_stats(
+            round_.target,
+            ("BOARD", "{}/{}".format(run.board_number, run.board_count)),
+            ("TIME", format_duration(run.elapsed())),
+            round_.solved,
+        )
 
-        if round_.solved:
-            text = "Solved in {}s · +{}".format(
-                int(round(self.solve_seconds)), self.last_points
-            )
+        if run.is_finished:
+            text = self.describe_result()
+        elif round_.solved:
+            text = "Solved in {}s".format(int(round(self.solve_seconds)))
         elif round_.best is not None:
             text = "Closest so far: {} ({} away)".format(
                 format_value(round_.best),
@@ -429,7 +558,9 @@ class CountdownScreen(ui.View):
 
         self.status_label.text = text
 
-        if round_.solved:
+        if run.is_finished:
+            self.show_action("New run", primary=True)
+        elif round_.solved:
             self.show_action("Next board", primary=True)
         else:
             self.show_action("Skip", primary=False)
@@ -440,26 +571,27 @@ class CountdownScreen(ui.View):
         """Called by the board view for every committed move."""
         self.note = None
 
-        if self.round.record(result.value):
+        if self.round.record(result.value) and not self.run.is_finished:
             self.solve_seconds = time.monotonic() - self.started
-            self.last_points = self.session.finish(self.round)
+            if self.run.solve():
+                self.finish_run()
 
         self.refresh()
 
     def apply_settings(self, draft, force_new_board=False):
         """Adopt draft settings and save them.
 
-        Deals a new board if the big-number count changed, or when forced.
-        Returns False, changing nothing, while a merge is animating.
+        Starts a new run if a run rule changed (RUN_RULE_KEYS), or when
+        forced. Returns False, changing nothing, while a merge is animating.
         """
         previous = self.settings
-        needs_board = (
-            force_new_board or draft["big_count"] != previous["big_count"]
+        needs_run = force_new_board or any(
+            draft[key] != previous[key] for key in RUN_RULE_KEYS
         )
 
         self.settings = dict(draft)
 
-        if needs_board and not self.start_new_board():
+        if needs_run and not self.start_new_run():
             self.settings = previous
             return False
 
@@ -516,18 +648,32 @@ class CountdownScreen(ui.View):
             self.refresh()
 
     def action_tapped(self, sender):
-        """Next board after a solve; otherwise skip, scoring the closest."""
+        """New run after a finish, Next board after a solve, otherwise Skip."""
         if self.board_view.resolving:
             return
 
+        if self.run.is_finished:
+            self.start_new_run()
+            return
+
         if self.round.solved:
-            note = None
-        else:
-            points = self.session.finish(self.round)
-            note = "Skipped {} · +{}".format(self.round.target, points)
+            previous_note = self.note
+            self.note = None
+            if not self.start_new_board():
+                self.note = previous_note
+            return
+
+        # Skip: the penalty is added; skipping the last board ends the run.
+        target = self.round.target
+
+        if self.run.skip():
+            self.note = None
+            self.finish_run()
+            self.refresh()
+            return
 
         previous_note = self.note
-        self.note = note
+        self.note = "Skipped {} · +{}s".format(target, self.run.skip_penalty)
 
         if not self.start_new_board():
             self.note = previous_note

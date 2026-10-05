@@ -8,11 +8,12 @@ Rules, as on the show but without the clock:
     combined with + - × ÷, and every result must be a positive whole number.
     Not every number has to be used. The target is in TARGET_RANGE.
 
-Targets are built, not guessed: the dealer plays random legal merges, picks
-a value made along the way, and keeps only the merges that value needed.
-That route is stored on the round, so every target is makeable and hints
-along it are instant. Off the route, a capped breadth-first search over
-sorted number sets finds the shortest way from the current position.
+Targets are chosen, not guessed: numbers_made_by_subset works out every
+value each subset of the six numbers makes, which gives the fewest numbers
+any solution needs. The difficulty picks that count (FEWEST_NUMBERS_FOR),
+and the target's route is stored on the round, so every target is makeable
+and hints along it are instant. Off the route, a capped breadth-first search
+over sorted number sets finds the shortest way from the current position.
 """
 
 import random
@@ -32,15 +33,23 @@ BOARD_COLS = 3
 TILE_COUNT = BOARD_ROWS * BOARD_COLS
 
 BIG_COUNT_CHOICES = (0, 1, 2, 3, 4)
+RANDOM_BIG_COUNT = "random"   # a setting: pick from BIG_COUNT_CHOICES per board
 DEFAULT_BIG_COUNT = 1
 
 TARGET_RANGE = (101, 999)
-MIN_ROUTE_MOVES = 3          # a dealt target needs at least this many merges
-MAX_DEAL_ATTEMPTS = 300
+
 
 # Positions the off-route hint search may explore before giving up, so a
 # hint can never freeze the app.
 SOLVER_NODE_LIMIT = 50000
+
+# Countdown difficulty is the fewest numbers any solution needs. Each board
+# picks one count from the difficulty's tuple: normal varies from 3 to 6,
+# hard is exactly 5, all_six needs every number. 2 would be one merge.
+DIFFICULTY_CHOICES = ("normal", "hard", "all_six")
+DEFAULT_DIFFICULTY = "normal"
+FEWEST_NUMBERS_FOR = {"normal": (3, 4, 5, 6), "hard": (5,), "all_six": (6,)}
+MAX_FEWEST_DEAL_ATTEMPTS = 20   # each attempt solves every subset
 
 
 # --- combining two numbers --------------------------------------------------
@@ -121,6 +130,80 @@ def solve(numbers, target, node_limit=SOLVER_NODE_LIMIT):
     return None
 
 
+# --- fewest numbers needed --------------------------------------------------
+
+def _count_bits(mask):
+    return bin(mask).count("1")
+
+
+def numbers_made_by_subset(numbers):
+    """Every value each subset of the numbers makes using all of that subset.
+
+    Returns {mask: {value: recipe}}, where bit i of mask means numbers[i] is
+    used. A starting number's recipe is None; any other recipe is
+    (left_mask, left_value, right_mask, right_value, step), step being
+    (left, op, right, value). One recipe is kept per value. Cost grows fast
+    with the count of numbers; six is the intended size.
+    """
+    made = {}
+    for index, number in enumerate(numbers):
+        made[1 << index] = {number: None}
+
+    full = (1 << len(numbers)) - 1
+
+    for mask in sorted(range(1, full + 1), key=_count_bits):
+        if _count_bits(mask) < 2:
+            continue
+
+        values = {}
+        lowest = mask & -mask
+        part = (mask - 1) & mask
+
+        while part:
+            # Visit each split once: the part holding the lowest bit.
+            if part & lowest:
+                rest = mask ^ part
+                for a in made[part]:
+                    for b in made[rest]:
+                        for step in combinations_for(a, b):
+                            if step[3] not in values:
+                                values[step[3]] = (part, a, rest, b, step)
+            part = (part - 1) & mask
+
+        made[mask] = values
+
+    return made
+
+
+def fewest_numbers_needed(made):
+    """{value: (count, mask)}: the fewest numbers that make each value."""
+    fewest = {}
+
+    for mask, values in made.items():
+        count = _count_bits(mask)
+        for value in values:
+            best = fewest.get(value)
+            if best is None or count < best[0]:
+                fewest[value] = (count, mask)
+
+    return fewest
+
+
+def route_from(made, mask, value):
+    """The steps that make value from the subset mask, in playing order."""
+    recipe = made[mask][value]
+
+    if recipe is None:
+        return []
+
+    left_mask, left_value, right_mask, right_value, step = recipe
+    return (
+        route_from(made, left_mask, left_value)
+        + route_from(made, right_mask, right_value)
+        + [step]
+    )
+
+
 # --- dealing ----------------------------------------------------------------
 
 def deal_numbers(big_count, rng):
@@ -136,54 +219,11 @@ def deal_numbers(big_count, rng):
     return numbers
 
 
-def _random_walk(numbers, rng):
-    """Play random legal merges until one number is left.
-
-    Returns steps (left, op, right, value, left_id, right_id, value_id);
-    the ids say which earlier number each operand was, for route pruning.
-    """
-    pool = [(value, index) for index, value in enumerate(numbers)]
-    next_id = len(numbers)
-    steps = []
-
-    while len(pool) > 1:
-        i, j = rng.sample(range(len(pool)), 2)
-        (a, a_id), (b, b_id) = pool[i], pool[j]
-
-        left, op, right, value = rng.choice(combinations_for(a, b))
-
-        if left == a and right == b:
-            left_id, right_id = a_id, b_id
-        else:
-            left_id, right_id = b_id, a_id
-
-        pool = [item for k, item in enumerate(pool) if k not in (i, j)]
-        pool.append((value, next_id))
-        steps.append((left, op, right, value, left_id, right_id, next_id))
-        next_id += 1
-
-    return steps
-
-
-def _route_to(steps, value_id):
-    """Only the steps the value with value_id actually depends on, in order."""
-    needed = {value_id}
-    route = []
-
-    for step in reversed(steps):
-        if step[6] in needed:
-            route.append(step[:4])
-            needed.add(step[4])
-            needed.add(step[5])
-
-    route.reverse()
-    return route
-
-
 class CountdownRound(TargetRound):
     """A Countdown board: the shared target round plus its stored route."""
 
-    def __init__(self, starting_rows, target, route, big_count, attempts=1):
+    def __init__(self, starting_rows, target, route, big_count, attempts=1,
+                 difficulty=DEFAULT_DIFFICULTY, fewest_numbers=None):
         super().__init__(
             starting_rows,
             target,
@@ -193,6 +233,8 @@ class CountdownRound(TargetRound):
         self.route = list(route)
         self.big_count = big_count
         self.attempts = attempts
+        self.difficulty = difficulty
+        self.fewest_numbers = fewest_numbers   # known for hard deals only
 
         # The sorted numbers on the board before each route step.
         current = sorted(value for row in starting_rows for value in row)
@@ -216,43 +258,56 @@ class CountdownRound(TargetRound):
         return None
 
 
-def deal_round(big_count=DEFAULT_BIG_COUNT, rng=None):
-    """Deal six numbers and a target needing at least MIN_ROUTE_MOVES merges."""
+def deal_round(big_count=DEFAULT_BIG_COUNT, rng=None,
+               difficulty=DEFAULT_DIFFICULTY):
+    """Deal six numbers and a target for a difficulty.
+
+    The fewest numbers the target needs is drawn from
+    FEWEST_NUMBERS_FOR[difficulty]. big_count may be RANDOM_BIG_COUNT; the
+    round records the count actually dealt.
+    """
+    if difficulty not in FEWEST_NUMBERS_FOR:
+        raise ValueError(
+            "difficulty must be one of {}".format(DIFFICULTY_CHOICES))
+
     rng = rng or random.Random()
+
+    if big_count == RANDOM_BIG_COUNT:
+        big_count = rng.choice(BIG_COUNT_CHOICES)
+
+    return _deal_by_fewest_numbers(big_count, rng, difficulty)
+
+
+def _deal_by_fewest_numbers(big_count, rng, difficulty):
+    """Deal a target whose fewest numbers is one of the difficulty's counts.
+
+    The count is chosen among those this board can offer, so each count is
+    equally likely whenever the board has a target for it.
+    """
     low, high = TARGET_RANGE
-    fallback = None
+    allowed = FEWEST_NUMBERS_FOR[difficulty]
 
-    for attempts in range(1, MAX_DEAL_ATTEMPTS + 1):
+    for attempts in range(1, MAX_FEWEST_DEAL_ATTEMPTS + 1):
         numbers = deal_numbers(big_count, rng)
-        steps = _random_walk(numbers, rng)
+        made = numbers_made_by_subset(numbers)
+        fewest = fewest_numbers_needed(made)
 
-        candidates = []
-        for step in steps:
-            value = step[3]
-            if not low <= value <= high or value in numbers:
-                continue
-            if one_move_makes(numbers, value):
-                continue
-            route = _route_to(steps, step[6])
-            candidates.append((value, route))
+        by_count = {}
+        for value, (count, _mask) in fewest.items():
+            if count in allowed and low <= value <= high:
+                by_count.setdefault(count, []).append(value)
 
-        rich = [c for c in candidates if len(c[1]) >= MIN_ROUTE_MOVES]
-
-        if rich:
-            target, route = rng.choice(rich)
+        if by_count:
+            count = rng.choice(sorted(by_count))
+            target = rng.choice(sorted(by_count[count]))
+            _count, mask = fewest[target]
+            route = route_from(made, mask, target)
             rows = [numbers[:BOARD_COLS], numbers[BOARD_COLS:]]
-            return CountdownRound(rows, target, route, big_count, attempts)
+            return CountdownRound(rows, target, route, big_count, attempts,
+                                  difficulty=difficulty, fewest_numbers=count)
 
-        if fallback is None and candidates:
-            fallback = (numbers, candidates)
-
-    if fallback is None:
-        raise RuntimeError("Could not deal a Countdown target")
-
-    numbers, candidates = fallback
-    target, route = rng.choice(candidates)
-    rows = [numbers[:BOARD_COLS], numbers[BOARD_COLS:]]
-    return CountdownRound(rows, target, route, big_count, MAX_DEAL_ATTEMPTS)
+    raise RuntimeError(
+        "Could not deal a {} Countdown target".format(difficulty))
 
 
 # --- hints ------------------------------------------------------------------
