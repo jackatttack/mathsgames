@@ -127,6 +127,37 @@ class ChoiceRow(ui.View):
             self.action(self)
 
 
+class ChoiceGrid(ChoiceRow):
+    """Like ChoiceRow, but the buttons wrap into rows of `columns`.
+
+    Same interface: selected_index, action(sender), set_labels and
+    set_enabled. Use it when there are too many choices for one row.
+    """
+
+    def __init__(self, labels, action, columns=3, selected_colors=None):
+        super().__init__(labels, action, selected_colors)
+        self.columns = columns
+
+    def row_count(self):
+        return max(1, -(-len(self.buttons) // self.columns))
+
+    def preferred_height(self, row_height=44):
+        """Height for every row at row_height points, gaps included."""
+        rows = self.row_count()
+        return rows * row_height + (rows - 1) * self.GAP
+
+    def layout(self):
+        rows = self.row_count()
+        width = (self.width - self.GAP * (self.columns - 1)) / self.columns
+        height = (self.height - self.GAP * (rows - 1)) / rows
+
+        for index, button in enumerate(self.buttons):
+            row, col = divmod(index, self.columns)
+            button.frame = (
+                col * (width + self.GAP), row * (height + self.GAP), width, height
+            )
+
+
 class ToggleRow(ui.View):
     """A row of buttons where any number can be on.
 

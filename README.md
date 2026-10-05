@@ -77,6 +77,22 @@ that number away from notes in its row, column and box.
 Every KenKen and Sudoku puzzle has exactly one solution. Both have Undo,
 and a solved board shows your time.
 
+### Pick & Mix
+
+A two-player game on one phone, passed back and forth. A shared pool of ten
+tiles sits under a target. Take turns tapping a tile into your own zone,
+four picks each, then merge your tiles (+ − × ÷, whole-number results) to
+get as close to the target as you can. You can merge in your zone at any
+time, even mid-draft. Undo, or a double-tap on empty space in your zone,
+reverses your last merge, but picks are final. When you are happy, Lock in:
+your closest tile counts.
+
+The closer player scores the margin they won by (up to 10), plus 3 for
+hitting the target exactly. The loser picks first next round, and the
+results show the best answer each hand could have made. In Settings choose
+a number pool (Standard, Primes, Cubes, Factor-rich, All large, or Small:
+1 to 10 with targets under 100) and play first to 20, 30 or 50.
+
 ## Updating
 
 Run the install snippet again. The games are replaced with the latest

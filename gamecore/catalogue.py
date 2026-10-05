@@ -45,4 +45,13 @@ GAMES = (
         entry="games.sudoku.entry:create_view",
         status="in development",
     ),
+    GameInfo(
+        game_id="pick_and_mix",
+        title="Pick & Mix",
+        tagline="Two players draft tiles, then merge to get closest to the target",
+        icon="1v1",
+        accent="coral",
+        entry="games.pick_and_mix.entry:create_view",
+        status="playable",
+    ),
 )
