@@ -1,0 +1,18 @@
+Fill the grid so every row, every column and every box holds each number exactly once.
+
+## How to play
+- The bold numbers are given and cannot change.
+- Tap an empty cell to open the number picker, then tap a number. Clear empties the cell.
+- Switch the picker to Notes to pencil in the numbers a cell might be.
+- Tap any number, given or yours, to light up its row, column and box and every matching number.
+- Undo takes back one step.
+- Your puzzle is saved if you leave, so you can carry on later.
+
+## Difficulty
+Easy puzzles need only singles: a cell with one possible number, or a number with one possible cell. Medium and Hard need more advanced techniques, such as pairs.
+
+## Settings
+- Board size: 4 × 4, 6 × 6 or 9 × 9.
+- Show mistakes: numbers that clash turn red.
+- Remove notes when a number is placed.
+- Highlight row, column, box and matching numbers.

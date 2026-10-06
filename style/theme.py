@@ -36,6 +36,10 @@ COLORS = {
     "chip_disabled": "#161D30",        # a target this board cannot make
     "chip_disabled_text": "#4A5470",
 
+    # Grid assists: the tapped cell's row, column and box, and matching numbers
+    "assist_peer": "#27355E",
+    "assist_match": "#3F68AD",
+
     # Two-player games: each player's buttons and found targets
     "player_one": "#7CB7FF",
     "player_two": "#F28B82",

@@ -1,5 +1,9 @@
 """
-The KenKen board: cells, grid lines, cage walls, cage labels and numbers.
+The KenKen board: cells, grid lines, cage walls, cage labels, numbers and
+notes.
+
+Notes sit in a mini grid below the cage label strip: 3 across (2 x 2 on a
+4 x 4 board), each value always in the same spot.
 
 One view drawn in draw(), with no subviews, so every change is a single
 set_needs_display(). It reports taps as cells through on_cell_tapped(cell),
@@ -16,6 +20,7 @@ CELL_COLOR = theme.color("surface")
 GRID_LINE_COLOR = theme.color("button")
 CAGE_WALL_COLOR = theme.color("muted")
 TEXT_COLOR = theme.color("text")
+NOTE_COLOR = theme.color("muted")
 SELECTED_FILL = theme.color("button")
 SELECTED_OUTLINE = theme.color("tile")
 MISTAKE_COLOR = theme.color("coral")
@@ -32,6 +37,8 @@ class KenKenBoardView(ui.View):
     SELECTED_OUTLINE_WIDTH = 3
     LABEL_FONT_RATIO = 0.22
     VALUE_FONT_RATIO = 0.5
+    NOTE_FONT_RATIO = 0.22
+    NOTE_TOP_RATIO = 0.3     # top strip of each cell kept clear for the cage label
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -39,6 +46,7 @@ class KenKenBoardView(ui.View):
         self.puzzle = None
         self.cage_of = {}
         self.values = []
+        self.notes = {}
         self.selected_cell = None
         self.conflicts = set()
         self.wrong_cages = set()
@@ -50,14 +58,16 @@ class KenKenBoardView(ui.View):
         self.puzzle = puzzle
         self.cage_of = puzzle.cage_lookup()
         self.values = [[None] * puzzle.size for _ in range(puzzle.size)]
+        self.notes = {}
         self.selected_cell = None
         self.conflicts = set()
         self.wrong_cages = set()
         self.solved = False
         self.set_needs_display()
 
-    def refresh_marks(self, values, selected_cell, conflicts, wrong_cages, solved):
+    def refresh_marks(self, values, notes, selected_cell, conflicts, wrong_cages, solved):
         self.values = values
+        self.notes = dict(notes)
         self.selected_cell = selected_cell
         self.conflicts = set(conflicts)
         self.wrong_cages = set(wrong_cages)
@@ -113,6 +123,7 @@ class KenKenBoardView(ui.View):
         self._draw_cage_walls(left, top, cell_size)
         self._draw_labels(left, top, cell_size)
         self._draw_values(left, top, cell_size)
+        self._draw_notes(left, top, cell_size)
 
         if self.selected_cell is not None:
             inset = self.SELECTED_OUTLINE_WIDTH
@@ -200,4 +211,29 @@ class KenKenBoardView(ui.View):
                     left + col * cell_size,
                     top + row * cell_size + cell_size * 0.08,
                     cell_size, cell_size,
+                )
+
+    def _draw_notes(self, left, top, cell_size):
+        """Pencil marks for empty cells, below the cage label strip.
+
+        Three columns suit sizes 3, 5 and 6; a 4 x 4 board uses 2 x 2 so its
+        four notes fill the space evenly.
+        """
+        size = self.puzzle.size
+        columns = 2 if size == 4 else 3
+        rows = -(-size // columns)    # ceiling division
+
+        strip = cell_size * self.NOTE_TOP_RATIO
+        mini_width = cell_size / columns
+        mini_height = (cell_size - strip) / rows
+        font = ("AvenirNext-Medium", max(8, cell_size * self.NOTE_FONT_RATIO))
+
+        for (row, col), noted in self.notes.items():
+            for value in noted:
+                mini_row, mini_col = divmod(value - 1, columns)
+                draw_centred_text(
+                    str(value), font, NOTE_COLOR,
+                    left + col * cell_size + mini_col * mini_width,
+                    top + row * cell_size + strip + mini_row * mini_height,
+                    mini_width, mini_height,
                 )

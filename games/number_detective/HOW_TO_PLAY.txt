@@ -1,0 +1,17 @@
+Four numbers are hidden. Ask questions to work out what they are.
+
+## Asking
+- Tap one of the two question cards to choose it.
+- Tap the tiles it asks about, then tap Ask.
+- The answer joins your clue log, and two new cards are dealt.
+
+## Naming
+- With no card chosen, tap a tile to open the number picker and name it.
+- A wrong name costs a point.
+- Switch the picker to Notes to pencil in the numbers a tile might be.
+
+## Cracking the case
+The case is cracked when every tile is named. Your score is compared with par for the case.
+
+## Settings
+Show what's still possible: shows how many answers remain and fades numbers already ruled out. Turn it off to do all the detective work yourself.

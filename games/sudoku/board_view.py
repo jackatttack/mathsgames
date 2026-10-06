@@ -26,6 +26,9 @@ SELECTED_FILL = theme.color("button")
 SELECTED_OUTLINE = theme.color("tile")
 MISTAKE_COLOR = theme.color("coral")
 SOLVED_COLOR = theme.color("success")
+PEER_FILL = theme.color("assist_peer")        # row, column and box of the focus cell
+MATCH_FILL = theme.color("assist_match")      # cells holding the focus cell's number
+MATCH_NOTE_COLOR = theme.color("sky")         # pencil marks of the focus number
 
 
 class SudokuBoardView(ui.View):
@@ -51,6 +54,7 @@ class SudokuBoardView(ui.View):
         self.selected_cell = None
         self.conflicts = set()
         self.solved = False
+        self.focus_cell = None
 
     # --- what to show --------------------------------------------------------
 
@@ -63,14 +67,19 @@ class SudokuBoardView(ui.View):
         self.selected_cell = None
         self.conflicts = set()
         self.solved = False
+        self.focus_cell = None
         self.set_needs_display()
 
-    def refresh_marks(self, values, notes, selected_cell, conflicts, solved):
+    def refresh_marks(self, values, notes, selected_cell, conflicts, solved,
+                      focus_cell=None):
+        """Show the player's marks. focus_cell, when given, is highlighted
+        with its row, column, box and every copy of its number."""
         self.values = values
         self.notes = dict(notes)
         self.selected_cell = selected_cell
         self.conflicts = set(conflicts)
         self.solved = solved
+        self.focus_cell = focus_cell
         self.set_needs_display()
 
     # --- geometry ------------------------------------------------------------
@@ -112,6 +121,7 @@ class SudokuBoardView(ui.View):
 
         ui.set_color(CELL_COLOR)
         ui.Path.rect(left, top, side, side).fill()
+        self._draw_assist(left, top, cell_size)
 
         if self.selected_cell is not None:
             ui.set_color(SELECTED_FILL)
@@ -122,14 +132,50 @@ class SudokuBoardView(ui.View):
         self._draw_values(left, top, cell_size)
         self._draw_notes(left, top, cell_size)
 
+        # The picker's cell, or else the highlighted cell (a given has no
+        # picker), gets the outline so it reads as the one tapped.
         if self.selected_cell is not None:
+            outlined = self.selected_cell
+        else:
+            outlined = self.focus_cell
+        if outlined is not None:
             inset = self.SELECTED_OUTLINE_WIDTH
-            x, y, width, height = self.cell_frame(self.selected_cell)
+            x, y, width, height = self.cell_frame(outlined)
             outline = ui.Path.rect(x + inset, y + inset,
                                    width - 2 * inset, height - 2 * inset)
             outline.line_width = self.SELECTED_OUTLINE_WIDTH
             ui.set_color(SELECTED_OUTLINE)
             outline.stroke()
+
+    def focus_value(self):
+        """The number in the focus cell, or None."""
+        if self.focus_cell is None:
+            return None
+        row, col = self.focus_cell
+        return self.values[row][col]
+
+    def _draw_assist(self, left, top, cell_size):
+        """Shade the focus cell's row, column and box, then its number's copies.
+
+        Drawn first, under the selection, grid lines and numbers.
+        """
+        if self.focus_cell is None:
+            return
+        focus_row, focus_col = self.focus_cell
+        focus_box = (focus_row // self.box_rows, focus_col // self.box_cols)
+        match = self.focus_value()
+
+        for row in range(self.size):
+            for col in range(self.size):
+                in_box = (row // self.box_rows, col // self.box_cols) == focus_box
+                if match is not None and self.values[row][col] == match:
+                    ui.set_color(MATCH_FILL)
+                elif row == focus_row or col == focus_col or in_box:
+                    ui.set_color(PEER_FILL)
+                else:
+                    continue
+                ui.Path.rect(left + col * cell_size, top + row * cell_size,
+                             cell_size, cell_size).fill()
 
     def _draw_grid_lines(self, left, top, side, cell_size):
         lines = ui.Path()
@@ -181,11 +227,13 @@ class SudokuBoardView(ui.View):
         font = ("AvenirNext-Medium", max(8, cell_size * self.NOTE_FONT_RATIO))
         mini_width = cell_size / self.box_cols
         mini_height = cell_size / self.box_rows
+        match = self.focus_value()
         for (row, col), noted in self.notes.items():
             for value in noted:
                 mini_row, mini_col = divmod(value - 1, self.box_cols)
+                color = MATCH_NOTE_COLOR if value == match else NOTE_COLOR
                 draw_centred_text(
-                    str(value), font, NOTE_COLOR,
+                    str(value), font, color,
                     left + col * cell_size + mini_col * mini_width,
                     top + row * cell_size + mini_row * mini_height,
                     mini_width, mini_height,

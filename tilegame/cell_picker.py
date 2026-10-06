@@ -34,7 +34,7 @@ NOTE_COLOR = theme.color("sky")    # noted values and the Notes button when on
 class CellPicker(ui.View):
     """A small panel of value buttons plus Clear (and Notes), shown beside a cell."""
 
-    MAX_VALUES = 9
+    MAX_VALUES = 12
 
     # --- editable layout, in points ------------------------------------------
     BUTTON_SIZE = 48

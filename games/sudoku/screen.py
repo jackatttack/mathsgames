@@ -9,7 +9,7 @@ the level the puzzle actually reached, which is rarely easier than asked.
 Play: tap an empty cell to open the number picker beside it, then tap a
 number to write it, or Clear to empty the cell. Notes mode in the picker
 toggles pencil marks instead, and the picker stays open so several can be
-marked. Givens cannot be selected. With "Remove notes" on, placing a number
+marked. Tapping a given only highlights it. With "Remove notes" on, placing a number
 also removes it from notes in the same row, column and box, in one undo
 step. With "Show mistakes" on, numbers that clash turn coral.
 
@@ -27,6 +27,7 @@ import ui
 from style import theme
 from tilegame.cell_picker import CellPicker
 from tilegame.fill_grid import FillGrid
+from tilegame import saved_game
 from tilegame.widgets import ChoiceRow, make_button, make_label
 
 from games.sudoku import rules
@@ -54,12 +55,14 @@ LEVEL_LABELS = {1: "Easy", 2: "Medium", 3: "Hard"}      # rules levels
 
 GAME_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
+SAVE_PATH = os.path.join(GAME_DIR, "saved_game.json")   # the puzzle in progress
 
 DEFAULT_SETTINGS = {
     "size": 9,
     "difficulty": "easy",
     "show_mistakes": True,
     "tidy_notes": True,
+    "highlight": True,
 }
 
 
@@ -89,7 +92,7 @@ def load_settings():
     elif settings["difficulty"] not in offered:
         settings["difficulty"] = hardest_offered(settings["size"])
 
-    for key in ("show_mistakes", "tidy_notes"):
+    for key in ("show_mistakes", "tidy_notes", "highlight"):
         if isinstance(saved.get(key), bool):
             settings[key] = saved[key]
 
@@ -153,6 +156,14 @@ class SettingsPanel(ui.View):
         self.tidy_switch = ui.Switch()
         self.tidy_switch.action = self.tidy_changed
 
+        self.highlight_label = make_label(
+            "Highlight row, column, box and matching numbers",
+            ("AvenirNext-Medium", 15), TEXT, alignment=ui.ALIGN_LEFT,
+        )
+        self.highlight_label.number_of_lines = 2
+        self.highlight_switch = ui.Switch()
+        self.highlight_switch.action = self.highlight_changed
+
         self.new_puzzle_button = make_button(
             "New puzzle", self.new_puzzle_tapped,
             background=theme.color("tile"), title_color=BACKGROUND,
@@ -170,6 +181,8 @@ class SettingsPanel(ui.View):
             self.mistakes_switch,
             self.tidy_label,
             self.tidy_switch,
+            self.highlight_label,
+            self.highlight_switch,
             self.new_puzzle_button,
             self.done_button,
         ):
@@ -198,6 +211,9 @@ class SettingsPanel(ui.View):
         y += 56
         self.tidy_label.frame = (left, y, column - switch_width - 12, 44)
         self.tidy_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
+        y += 56
+        self.highlight_label.frame = (left, y, column - switch_width - 12, 44)
+        self.highlight_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
         y += 68
         self.new_puzzle_button.frame = (left, y, column, 52)
         y += 68
@@ -209,6 +225,7 @@ class SettingsPanel(ui.View):
         self.sync_difficulty()
         self.mistakes_switch.value = bool(self.draft["show_mistakes"])
         self.tidy_switch.value = bool(self.draft["tidy_notes"])
+        self.highlight_switch.value = bool(self.draft["highlight"])
         self.hidden = False
         self.bring_to_front()
 
@@ -244,6 +261,9 @@ class SettingsPanel(ui.View):
     def tidy_changed(self, sender):
         self.draft["tidy_notes"] = bool(sender.value)
 
+    def highlight_changed(self, sender):
+        self.draft["highlight"] = bool(sender.value)
+
     def new_puzzle_tapped(self, sender):
         if self.screen.apply_settings(self.draft, force_new_puzzle=True):
             self.hidden = True
@@ -271,6 +291,7 @@ class SudokuScreen(ui.View):
         self.puzzle = None
         self.grid = None             # FillGrid holding values and notes
         self.selected_cell = None    # the cell the picker is open for
+        self.focus_cell = None       # the cell highlighted with its row, column, box and number
         self.started = None          # when this puzzle was dealt
         self.solve_seconds = None    # set once, in the tap that solves it
 
@@ -296,7 +317,8 @@ class SudokuScreen(ui.View):
         ):
             self.add_subview(view)
 
-        self.new_puzzle()
+        if not self.resume_saved_game():
+            self.new_puzzle()
 
     # --- header contract -----------------------------------------------------
 
@@ -339,17 +361,27 @@ class SudokuScreen(ui.View):
         return self.solve_seconds is not None
 
     def new_puzzle(self):
-        """Deal a puzzle for the current settings and show it."""
-        size = self.settings["size"]
+        """Deal a puzzle for the current settings, show it and save it."""
+        puzzle = rules.generate_puzzle(self.settings["size"], self.settings["difficulty"])
+        self.show_puzzle(puzzle, self.fresh_grid(puzzle), seconds_played=0)
+        self.save_game()
 
-        self.puzzle = rules.generate_puzzle(size, self.settings["difficulty"])
-        self.grid = FillGrid(
-            size,
-            givens=self.puzzle.givens_by_cell(),
-            units=rules.cell_units(size),
+    def fresh_grid(self, puzzle):
+        """An empty FillGrid for puzzle: its givens, plus boxes as units."""
+        return FillGrid(
+            puzzle.size,
+            givens=puzzle.givens_by_cell(),
+            units=rules.cell_units(puzzle.size),
         )
+
+    def show_puzzle(self, puzzle, grid, seconds_played):
+        """Put a puzzle and its grid on screen: a new deal or a resumed save."""
+        size = puzzle.size
+        self.puzzle = puzzle
+        self.grid = grid
         self.selected_cell = None
-        self.started = time.time()
+        self.focus_cell = None
+        self.started = time.time() - seconds_played
         self.solve_seconds = None
 
         self.picker.hide_picker()
@@ -358,6 +390,37 @@ class SudokuScreen(ui.View):
         self.set_subtitle("%d×%d · %s" % (
             size, size, LEVEL_LABELS.get(self.puzzle.level, "Easy")))
         self.refresh()
+
+    # --- saved game ----------------------------------------------------------
+
+    def save_game(self):
+        """Save the puzzle in progress now. A solved puzzle discards the save."""
+        if self.solved:
+            saved_game.discard_game(SAVE_PATH)
+            return
+        saved_game.save_game(
+            SAVE_PATH, rules.puzzle_to_data(self.puzzle), self.grid,
+            time.time() - self.started, self.header_subtitle,
+        )
+
+    def resume_saved_game(self):
+        """Show the saved puzzle if there is a usable one. True when resumed."""
+        data = saved_game.load_game(SAVE_PATH)
+        if data is None:
+            return False
+        try:
+            puzzle = rules.puzzle_from_data(data["puzzle"])
+            grid = self.fresh_grid(puzzle)
+            saved_game.restore_marks(grid, data["marks"])
+            seconds_played = float(data["seconds_played"])
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            print("Sudoku: ignoring saved game: {}".format(error))
+            return False
+        if rules.is_solved(puzzle, grid.rows()):
+            saved_game.discard_game(SAVE_PATH)
+            return False
+        self.show_puzzle(puzzle, grid, seconds_played)
+        return True
 
     def refresh(self):
         """Redraw marks and status from the grid. Called after every change."""
@@ -372,8 +435,13 @@ class SudokuScreen(ui.View):
         else:
             conflicts = set()
 
+        if self.settings["highlight"] and not self.solved:
+            focus = self.focus_cell
+        else:
+            focus = None
         self.board_view.refresh_marks(
-            values, notes, self.selected_cell, conflicts, self.solved
+            values, notes, self.selected_cell, conflicts, self.solved,
+            focus_cell=focus,
         )
 
         if self.solved:
@@ -388,15 +456,33 @@ class SudokuScreen(ui.View):
         self.undo_button.enabled = self.grid.can_undo() and not self.solved
 
     def cell_tapped(self, cell):
-        """Open the picker beside cell; the same cell again, a given, or None closes it."""
-        if self.solved or cell is None or self.grid.is_given(cell):
+        """Highlight the tapped cell and open the picker beside it.
+
+        A given is highlighted but never opens the picker; tapping it again
+        clears the highlight. The cell the picker is open for, tapped again,
+        closes the picker and clears the highlight, as does a tap beside the
+        grid. After a number is placed the highlight stays on its cell.
+        """
+        if self.solved or cell is None:
+            self.focus_cell = None
             self.close_picker()
+            self.refresh()
             return
-        if cell == self.selected_cell and not self.picker.hidden:
+
+        if self.grid.is_given(cell):
+            self.focus_cell = None if cell == self.focus_cell else cell
             self.close_picker()
+            self.refresh()
+            return
+
+        if cell == self.selected_cell and not self.picker.hidden:
+            self.focus_cell = None
+            self.close_picker()
+            self.refresh()
             return
 
         self.selected_cell = cell
+        self.focus_cell = cell
         board_x, board_y = self.board_view.frame[0], self.board_view.frame[1]
         cell_x, cell_y, cell_width, cell_height = self.board_view.cell_frame(cell)
         anchor = (board_x + cell_x, board_y + cell_y, cell_width, cell_height)
@@ -414,7 +500,10 @@ class SudokuScreen(ui.View):
             self.refresh()
 
     def value_picked(self, value):
-        """Called by the picker: write a value, toggle a note, or clear (None)."""
+        """Called by the picker: write a value, toggle a note, or clear (None).
+
+        Every change is saved in the same tap.
+        """
         cell = self.selected_cell
         if cell is None:
             self.picker.hide_picker()
@@ -425,6 +514,7 @@ class SudokuScreen(ui.View):
             self.picker.hide_picker()
             self.selected_cell = None
             self.refresh()
+            self.save_game()
             return
 
         if self.picker.notes_mode:
@@ -434,6 +524,7 @@ class SudokuScreen(ui.View):
                 current=self.grid.value_at(cell), notes=self.grid.notes_at(cell)
             )
             self.refresh()
+            self.save_game()
             return
 
         changed = self.grid.set_value(
@@ -444,6 +535,7 @@ class SudokuScreen(ui.View):
         if changed and rules.is_solved(self.puzzle, self.grid.rows()):
             self.solve_seconds = time.time() - self.started
         self.refresh()
+        self.save_game()
 
     def undo_tapped(self, sender):
         self.picker.hide_picker()
@@ -451,13 +543,17 @@ class SudokuScreen(ui.View):
         if not self.solved:
             self.grid.undo()
         self.refresh()
+        self.save_game()
 
     def new_tapped(self, sender):
         self.new_puzzle()
 
     def touch_ended(self, touch):
-        """A tap on the background, off the board and buttons, closes the picker."""
+        """A tap on the background, off the board and buttons, clears the
+        highlight and closes the picker."""
+        self.focus_cell = None
         self.close_picker()
+        self.refresh()
 
     def apply_settings(self, draft, force_new_puzzle=False):
         """Adopt draft settings and save them.

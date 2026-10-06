@@ -19,6 +19,9 @@ Hints (a setting, off by default): tapping a target asks the solver for the
 shortest route from the current board. The first tap arms the route's first
 move (tile plus operation); tapping again plays it. Each tap re-plans, so
 undo and the player's own moves never confuse it.
+Always-visible operation keys (a setting, off by default): every tile shows
+its four operation quadrants until a move is armed, so one tap on a quadrant
+picks the tile and its operation together.
 
 UI stability (see JACK_BOOT): every change happens synchronously inside the
 tap that caused it, views are created once and only shown, hidden or
@@ -90,10 +93,15 @@ DEFAULT_SETTINGS = {
     "mode": "classic",
     "multiple": classic.DEFAULT_MULTIPLE,
     "hints": False,
+    "always_ops": False,
     "difficulty": target_mode.DEFAULT_DIFFICULTY,
     "board_style": target_mode.DEFAULT_BOARD_STYLE,
     "players": 1,
 }
+
+# On/off settings that change how the board looks or helps, never the deal:
+# changing one keeps the board in play.
+DISPLAY_ONLY_SETTINGS = ("hints", "always_ops")
 
 VALID_CHOICES = {
     "mode": MODES,
@@ -121,8 +129,9 @@ def load_settings():
         if saved.get(key) in choices:
             settings[key] = saved[key]
 
-    if isinstance(saved.get("hints"), bool):
-        settings["hints"] = saved["hints"]
+    for key in DISPLAY_ONLY_SETTINGS:
+        if isinstance(saved.get(key), bool):
+            settings[key] = saved[key]
 
     return settings
 
@@ -400,13 +409,13 @@ class TargetController:
     def move_committed(self, result):
         self.note = None
 
-        if self.round.record(result.value):
+        # A board scores once: replaying the solve after Undo changes nothing.
+        if not self.round.solved and self.round.record(result.value):
             self.solve_seconds = time.monotonic() - self.started
             self.last_points = self.session.finish(self.round)
 
     def hint_blocker(self, target):
-        if self.round.solved:
-            return "Solved! Tap Next board"
+        """Never blocks: after a solve, Undo then hints replay the route."""
         return None
 
     def is_done(self, target):
@@ -527,6 +536,15 @@ class SettingsPanel(ui.View):
         self.hints_switch = ui.Switch()
         self.hints_switch.action = self.hints_changed
 
+        self.ops_label = make_label(
+            "Always show operation keys",
+            ("AvenirNext-Medium", 15),
+            TEXT,
+            alignment=ui.ALIGN_LEFT,
+        )
+        self.ops_switch = ui.Switch()
+        self.ops_switch.action = self.ops_changed
+
         self.new_board_button = make_button(
             "New board", self.new_board_tapped,
             background=ACCENT, title_color=BACKGROUND,
@@ -554,6 +572,7 @@ class SettingsPanel(ui.View):
             + self.classic_views
             + self.target_views
             + (self.hints_label, self.hints_switch,
+               self.ops_label, self.ops_switch,
                self.new_board_button, self.done_button)
         ):
             self.add_subview(view)
@@ -600,6 +619,11 @@ class SettingsPanel(ui.View):
         self.hints_switch.frame = (
             left + column - switch_width, y + 6, switch_width, 31
         )
+        y += 56
+        self.ops_label.frame = (left, y, column - switch_width - 12, 44)
+        self.ops_switch.frame = (
+            left + column - switch_width, y + 6, switch_width, 31
+        )
         y += 68
         self.new_board_button.frame = (left, y, column, 52)
         y += 68
@@ -620,6 +644,7 @@ class SettingsPanel(ui.View):
             draft["players"]
         )
         self.hints_switch.value = bool(draft["hints"])
+        self.ops_switch.value = bool(draft["always_ops"])
 
         self._show_multiple()
         self._show_section()
@@ -677,6 +702,9 @@ class SettingsPanel(ui.View):
     def hints_changed(self, sender):
         self.draft["hints"] = bool(sender.value)
 
+    def ops_changed(self, sender):
+        self.draft["always_ops"] = bool(sender.value)
+
     def new_board_tapped(self, sender):
         if self.screen.apply_settings(self.draft, force_new_board=True):
             self.hidden = True
@@ -726,6 +754,7 @@ class GameScreen(ui.View):
         self.board_view = MultipleMergeBoardView(board=board)
         self.board_view.background_color = BACKGROUND
         self.board_view.on_move_committed = self.move_committed
+        self.board_view.always_show_operations = self.settings["always_ops"]
 
         self.reset_button = make_button("Reset board", self.reset_tapped)
         self.action_button = make_button("", self.action_tapped)
@@ -874,7 +903,8 @@ class GameScreen(ui.View):
         """
         previous = self.settings
         needs_board = force_new_board or any(
-            draft[key] != previous[key] for key in draft if key != "hints"
+            draft[key] != previous[key]
+            for key in draft if key not in DISPLAY_ONLY_SETTINGS
         )
 
         self.settings = dict(draft)
@@ -882,6 +912,9 @@ class GameScreen(ui.View):
         if needs_board and not self.start_new_board():
             self.settings = previous
             return False
+
+        self.board_view.always_show_operations = self.settings["always_ops"]
+        self.board_view.apply_move_visuals()
 
         if self.settings != previous:
             save_settings(self.settings)

@@ -63,6 +63,10 @@ class FillGrid:
     def notes_at(self, cell):
         return self._notes.get(cell, frozenset())
 
+    def all_notes(self):
+        """{cell: frozenset of notes} for every cell that has notes."""
+        return dict(self._notes)
+
     def is_given(self, cell):
         return cell in self.givens
 
@@ -194,6 +198,25 @@ class FillGrid:
                     self._values[row][col] = None
         self._notes = {}
         self._history = []
+
+    def load_marks(self, values, notes):
+        """Restore a saved position: rows of values plus {cell: notes}.
+
+        Used to resume a saved game. Givens stay as dealt, values that are
+        not allowed are ignored, notes only land in empty cells, and the
+        history starts empty, so Undo cannot step back past the resume.
+        """
+        self.reset()
+        for row in range(self.size):
+            for col in range(self.size):
+                value = values[row][col]
+                if (row, col) not in self.givens and value in self.allowed_values:
+                    self._values[row][col] = value
+        for cell, noted in notes.items():
+            if self.in_bounds(cell) and self.value_at(cell) is None:
+                kept = frozenset(value for value in noted if value in self.allowed_values)
+                if kept:
+                    self._notes[cell] = kept
 
     # --- internal ------------------------------------------------------------
 

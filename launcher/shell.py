@@ -18,6 +18,8 @@ import ui
 from feel import tactile
 from gamecore.game import load_entry
 from launcher.header import HeaderBar
+from launcher.help_card import HelpCardOverlay
+from gamecore import how_to_play
 from launcher.home import HomeView
 from style import theme
 
@@ -35,6 +37,8 @@ class AppShell(ui.View):
         super().__init__(**kwargs)
         self.background_color = theme.color("background")
         self.game_view = None
+        self.help_card = None       # the open game's HelpCard, if it has one
+        self.help_accent = theme.color("tile")
 
         self.home = HomeView(games, on_open=self.open_game)
         self.add_subview(self.home)
@@ -42,8 +46,13 @@ class AppShell(ui.View):
         self.header = HeaderBar(
             on_left=self.left_tapped,
             on_settings=self.settings_tapped,
+            on_help=self.help_tapped,
         )
         self.add_subview(self.header)
+
+        # Built once, shown over everything when the ? is tapped.
+        self.help_overlay = HelpCardOverlay()
+        self.add_subview(self.help_overlay)
 
         self.show_home_header()
 
@@ -70,6 +79,11 @@ class AppShell(ui.View):
         if callable(open_settings):
             open_settings()
 
+    def help_tapped(self, sender=None):
+        """Show the open game's how-to-play card."""
+        if self.help_card is not None:
+            self.help_overlay.show_card(self.help_card, self.help_accent)
+
     # --- games ---------------------------------------------------------------
 
     def open_game(self, game):
@@ -85,14 +99,21 @@ class AppShell(ui.View):
             )
             return
 
-        self.show_game(view, game.title)
+        self.show_game(
+            view, game.title,
+            help_card=how_to_play.load_card(game),
+            accent=theme.color(game.accent),
+        )
 
-    def show_game(self, view, title):
+    def show_game(self, view, title, help_card=None, accent=None):
         """Place a built game view under the header.
 
-        Separate from open_game so a smoke can supply its own view.
+        Separate from open_game so a smoke can supply its own view. With a
+        help_card the header shows a ? that opens it, in the game's accent.
         """
         self.game_view = view
+        self.help_card = help_card
+        self.help_accent = accent or theme.color("tile")
         self.add_subview(view)
 
         try:
@@ -105,6 +126,7 @@ class AppShell(ui.View):
             getattr(view, "header_subtitle", ""),
             back=True,
             settings=callable(getattr(view, "open_settings", None)),
+            help=help_card is not None,
         )
         self.home.hidden = True
         self.layout()
@@ -112,6 +134,8 @@ class AppShell(ui.View):
     def close_game(self, sender=None):
         """Leave the current game and return to the home screen."""
         tactile.haptic_tap()
+        self.help_overlay.close_tapped()
+        self.help_card = None
         if self.game_view is not None:
             self.remove_subview(self.game_view)
             self.game_view = None
@@ -126,6 +150,7 @@ class AppShell(ui.View):
         header_height = theme.LAYOUT["header_height"]
 
         self.header.frame = (0, top, width, header_height)
+        self.help_overlay.frame = (0, 0, width, height)
 
         content_top = top + header_height + self.CONTENT_GAP
         content = (0, content_top, width, max(0, height - content_top))

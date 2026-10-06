@@ -1,0 +1,19 @@
+Merge numbers on the board to make the numbers you need.
+
+## How to play
+- Tap a number. Its four corners become + − × and ÷.
+- Tap a corner to choose that operation.
+- Tap a number that lights up to merge onto it. The answer takes its place.
+- Answers can be fractions, but only whole numbers count.
+- Tap the chosen number again to pick a different operation.
+- Tap empty space to cancel. Double-tap empty space to undo a merge.
+
+## Classic
+Find as many multiples of the chosen number as you can on one board. The rail shows which ones this board can make. Reset board puts the starting numbers back and keeps what you have found. On your own you are timed; with two players you take turns and score the multiples you find.
+
+## Target
+Make the target in the banner. Skip moves to the next board and scores how close you got.
+
+## Settings
+- Hints: tap a target to see the next move, then tap again to play it.
+- Always show operation keys: every number shows its corners, so one tap picks the number and the operation together.

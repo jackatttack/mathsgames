@@ -54,4 +54,13 @@ GAMES = (
         entry="games.pick_and_mix.entry:create_view",
         status="playable",
     ),
+    GameInfo(
+        game_id="number_detective",
+        title="Number Detective",
+        tagline="Crack four hidden numbers with arithmetic clues",
+        icon="?",
+        accent="sky",
+        entry="games.number_detective.entry:create_view",
+        status="in development",
+    ),
 )

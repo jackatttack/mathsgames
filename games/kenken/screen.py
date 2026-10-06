@@ -25,6 +25,7 @@ import ui
 from style import theme
 from tilegame.cell_picker import CellPicker
 from tilegame.fill_grid import FillGrid
+from tilegame import saved_game
 from tilegame.widgets import ChoiceRow, ToggleRow, make_button, make_label
 
 from games.kenken import rules
@@ -51,6 +52,7 @@ OPERATION_LABELS = tuple(rules.OPERATION_SYMBOLS[name] for name in rules.OPERATI
 
 GAME_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
+SAVE_PATH = os.path.join(GAME_DIR, "saved_game.json")   # the puzzle in progress
 
 DEFAULT_SETTINGS = {
     "size": 4,
@@ -271,7 +273,7 @@ class KenKenScreen(ui.View):
         self.undo_button = make_button("Undo", self.undo_tapped)
         self.new_button = make_button("New puzzle", self.new_tapped)
 
-        self.picker = CellPicker(self.value_picked)
+        self.picker = CellPicker(self.value_picked, notes_enabled=True)
         self.settings_panel = SettingsPanel(self)
 
         for view in (
@@ -284,7 +286,8 @@ class KenKenScreen(ui.View):
         ):
             self.add_subview(view)
 
-        self.new_puzzle()
+        if not self.resume_saved_game():
+            self.new_puzzle()
 
     # --- header contract -----------------------------------------------------
 
@@ -327,21 +330,60 @@ class KenKenScreen(ui.View):
         return self.solve_seconds is not None
 
     def new_puzzle(self):
-        """Deal a puzzle for the current settings and show it."""
+        """Deal a puzzle for the current settings, show it and save it."""
         size = self.settings["size"]
         operations = self.settings["operations"]
 
-        self.puzzle = rules.generate_puzzle(size, operations)
-        self.grid = FillGrid(size)
+        puzzle = rules.generate_puzzle(size, operations)
+        subtitle = "%d×%d · %s" % (size, size, describe_operations(operations))
+        self.show_puzzle(puzzle, FillGrid(size), subtitle, seconds_played=0)
+        self.save_game()
+
+    def show_puzzle(self, puzzle, grid, subtitle, seconds_played):
+        """Put a puzzle and its grid on screen: a new deal or a resumed save."""
+        self.puzzle = puzzle
+        self.grid = grid
         self.selected_cell = None
-        self.started = time.time()
+        self.started = time.time() - seconds_played
         self.solve_seconds = None
 
         self.picker.hide_picker()
         self.picker.set_values(self.grid.allowed_values)
         self.board_view.load_puzzle(self.puzzle)
-        self.set_subtitle("%d×%d · %s" % (size, size, describe_operations(operations)))
+        self.set_subtitle(subtitle)
         self.refresh()
+
+    # --- saved game ----------------------------------------------------------
+
+    def save_game(self):
+        """Save the puzzle in progress now. A solved puzzle discards the save."""
+        if self.solved:
+            saved_game.discard_game(SAVE_PATH)
+            return
+        saved_game.save_game(
+            SAVE_PATH, rules.puzzle_to_data(self.puzzle), self.grid,
+            time.time() - self.started, self.header_subtitle,
+        )
+
+    def resume_saved_game(self):
+        """Show the saved puzzle if there is a usable one. True when resumed."""
+        data = saved_game.load_game(SAVE_PATH)
+        if data is None:
+            return False
+        try:
+            puzzle = rules.puzzle_from_data(data["puzzle"])
+            grid = FillGrid(puzzle.size)
+            saved_game.restore_marks(grid, data["marks"])
+            seconds_played = float(data["seconds_played"])
+            subtitle = str(data["subtitle"])
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            print("KenKen: ignoring saved game: {}".format(error))
+            return False
+        if rules.is_solved(puzzle, grid.rows()):
+            saved_game.discard_game(SAVE_PATH)
+            return False
+        self.show_puzzle(puzzle, grid, subtitle, seconds_played)
+        return True
 
     def refresh(self):
         """Redraw marks and status from the grid. Called after every change."""
@@ -358,8 +400,13 @@ class KenKenScreen(ui.View):
             conflicts = set()
             wrong_cages = set()
 
+        notes = {
+            cell: self.grid.notes_at(cell)
+            for cell in self.grid.empty_cells()
+            if self.grid.notes_at(cell)
+        }
         self.board_view.refresh_marks(
-            values, self.selected_cell, conflicts, wrong_cages, self.solved
+            values, notes, self.selected_cell, conflicts, wrong_cages, self.solved
         )
 
         if self.solved:
@@ -391,7 +438,8 @@ class KenKenScreen(ui.View):
 
         self.picker.show_beside(
             anchor, (0, 0, self.width, self.height),
-            current=self.grid.value_at(cell), dimmed=dimmed,
+            current=self.grid.value_at(cell), notes=self.grid.notes_at(cell),
+            dimmed=dimmed,
         )
         self.refresh()
 
@@ -402,16 +450,34 @@ class KenKenScreen(ui.View):
             self.refresh()
 
     def value_picked(self, value):
-        """Called by the picker: write value (None clears) into the selected cell."""
+        """Called by the picker: write a value, toggle a note, or clear (None).
+
+        In Notes mode the picker stays open so several notes can be marked in
+        a row; a written value or Clear closes it. Every change is saved.
+        """
         cell = self.selected_cell
+        if cell is None:
+            self.picker.hide_picker()
+            return
+
+        if value is not None and self.picker.notes_mode:
+            self.grid.toggle_note(cell, value)
+            self.picker.update_marks(
+                current=self.grid.value_at(cell), notes=self.grid.notes_at(cell)
+            )
+            self.refresh()
+            self.save_game()
+            return
+
         self.picker.hide_picker()
         self.selected_cell = None
 
-        if cell is not None and self.grid.set_value(cell, value):
+        if self.grid.set_value(cell, value):
             if rules.is_solved(self.puzzle, self.grid.rows()):
                 self.solve_seconds = time.time() - self.started
 
         self.refresh()
+        self.save_game()
 
     def undo_tapped(self, sender):
         self.picker.hide_picker()
@@ -419,6 +485,7 @@ class KenKenScreen(ui.View):
         if not self.solved:
             self.grid.undo()
         self.refresh()
+        self.save_game()
 
     def new_tapped(self, sender):
         self.new_puzzle()

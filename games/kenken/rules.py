@@ -105,6 +105,48 @@ class Puzzle:
         }
 
 
+def puzzle_to_data(puzzle):
+    """A Puzzle as JSON-ready data, for saving a game in progress."""
+    return {
+        "size": puzzle.size,
+        "cages": [
+            {
+                "cells": [list(cell) for cell in cage.cells],
+                "operation": cage.operation,
+                "target": cage.target,
+            }
+            for cage in puzzle.cages
+        ],
+        "solution": [list(row) for row in puzzle.solution],
+    }
+
+
+def puzzle_from_data(data):
+    """Rebuild a Puzzle from puzzle_to_data output.
+
+    Raises ValueError, KeyError or TypeError for data that cannot be a
+    puzzle. The cages must cover every cell exactly once, because the board
+    view looks up every cell's cage when it draws.
+    """
+    size = int(data["size"])
+    cages = tuple(
+        Cage(
+            tuple(tuple(int(part) for part in cell) for cell in cage["cells"]),
+            cage["operation"],
+            int(cage["target"]),
+        )
+        for cage in data["cages"]
+    )
+    solution = tuple(tuple(int(value) for value in row) for row in data["solution"])
+
+    if size not in BOARD_SIZES or len(solution) != size:
+        raise ValueError("saved puzzle does not fit a board size")
+    covered = sorted(cell for cage in cages for cell in cage.cells)
+    if covered != [(row, col) for row in range(size) for col in range(size)]:
+        raise ValueError("saved cages do not cover the board exactly")
+    return Puzzle(size, cages, solution)
+
+
 # --- arithmetic --------------------------------------------------------------
 
 def combine(operation, values):

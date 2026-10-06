@@ -99,6 +99,34 @@ class Puzzle:
         return len(self.givens_by_cell())
 
 
+def puzzle_to_data(puzzle):
+    """A Puzzle as JSON-ready data, for saving a game in progress."""
+    return {
+        "size": puzzle.size,
+        "givens": [list(row) for row in puzzle.givens],
+        "solution": [list(row) for row in puzzle.solution],
+        "difficulty": puzzle.difficulty,
+        "level": puzzle.level,
+    }
+
+
+def puzzle_from_data(data):
+    """Rebuild a Puzzle from puzzle_to_data output.
+
+    Raises ValueError, KeyError or TypeError for data that cannot be a puzzle.
+    """
+    size = int(data["size"])
+    givens = tuple(
+        tuple(None if value is None else int(value) for value in row)
+        for row in data["givens"]
+    )
+    solution = tuple(tuple(int(value) for value in row) for row in data["solution"])
+
+    if size not in BOARD_SIZES or len(givens) != size or len(solution) != size:
+        raise ValueError("saved puzzle does not fit a board size")
+    return Puzzle(size, givens, solution, str(data["difficulty"]), int(data["level"]))
+
+
 # --- geometry ----------------------------------------------------------------
 
 @functools.lru_cache(maxsize=None)

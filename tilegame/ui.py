@@ -457,6 +457,10 @@ class MultipleMergeBoardView(UIBoardView):
         self.resolving = False
         self._empty_tap_time = None
 
+        # Set by the screen: every tile shows its operation quadrants while
+        # no move is armed, so one tap picks a tile and its operation.
+        self.always_show_operations = False
+
         # Set by the screen: called with each committed MoveResult.
         self.on_move_committed = None
 
@@ -650,7 +654,10 @@ class MultipleMergeBoardView(UIBoardView):
             is_selected = tile.id == move.selected_id
 
             meta["mm_selected"] = is_selected
-            meta["mm_show_ops"] = bool(is_selected and move.mode == NUMBER_SELECTED)
+            meta["mm_show_ops"] = bool(
+                (is_selected and move.mode == NUMBER_SELECTED)
+                or (self.always_show_operations and armed is None)
+            )
             meta["mm_armed_op"] = armed if is_selected else None
             meta["mm_valid_target"] = tile.id in valid_ids
             meta["mm_dimmed"] = bool(
@@ -666,7 +673,19 @@ class MultipleMergeBoardView(UIBoardView):
     # --- input ---------------------------------------------------------
 
     def _operation_hit(self, tile, point):
-        if tile is None or tile.id != self.pending_move.selected_id:
+        """The operation quadrant tapped on tile, or None.
+
+        Normally only the selected tile shows quadrants. With
+        always_show_operations every tile does until a move is armed.
+        """
+        if tile is None:
+            return None
+
+        any_tile = (
+            self.always_show_operations
+            and self.pending_move.mode != OPERATION_ARMED
+        )
+        if tile.id != self.pending_move.selected_id and not any_tile:
             return None
 
         hit_test = getattr(self._view_of(tile), "operation_at_screen_point", None)
@@ -707,7 +726,11 @@ class MultipleMergeBoardView(UIBoardView):
 
         operation = self._operation_hit(tile, point)
         if operation is not None:
-            self.pending_move.choose_operation(operation)
+            # With keys always showing, a quadrant on any tile picks that
+            # tile and arms the operation in one tap.
+            if tile.id != move.selected_id:
+                move.select(tile.id)
+            move.choose_operation(operation)
             self.apply_move_visuals()
             return
 

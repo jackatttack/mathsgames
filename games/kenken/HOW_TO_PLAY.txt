@@ -1,0 +1,18 @@
+Fill the grid so every row and column holds each number once, and every cage makes its target.
+
+## The rules
+- On a 4 × 4 board use 1 to 4, on a 6 × 6 board use 1 to 6, and so on.
+- Each cage is outlined in bold. Its label gives the target and the operation: 12× means the cage's numbers multiply to make 12.
+- − and ÷ cages always have two cells: take the smaller from the larger, or divide the larger by the smaller.
+- A cage with no operation is one cell. Its number is the answer.
+- Numbers may repeat inside a cage, as long as they are not in the same row or column.
+
+## How to play
+- Tap a cell to open the number picker, then tap a number. Clear empties the cell.
+- Switch the picker to Notes to pencil in the numbers a cell might be.
+- Undo takes back one step.
+- Your puzzle is saved if you leave, so you can carry on later.
+
+## Settings
+- Board size and which operations to use.
+- Show mistakes: repeated numbers and wrong cages turn red.

@@ -1,0 +1,16 @@
+Use the six numbers to make the target, like the TV numbers round.
+
+## How to play
+- Tap a number. Its four corners become + − × and ÷.
+- Tap a corner, then tap a number that lights up to combine them.
+- Every answer must be a positive whole number.
+- You do not have to use every number.
+- Reset puts the board back to the start.
+
+## A run
+A run is a set of boards against the clock. The banner shows the board number and your time. Skip moves on, but adds a time penalty. Your best time for each set of rules is kept.
+
+## Settings
+- How many big numbers to deal, or a mix.
+- The skip penalty.
+- Hints: tap the target to see the next step, then tap again to play it.

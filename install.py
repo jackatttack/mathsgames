@@ -33,7 +33,7 @@ LAUNCHER = "launch_mathsgames.py"
 RETIRED_FILES = ("maths_games.py",)
 
 # Files the app writes while you play. Updates never replace or remove them.
-PLAYER_FILES = ("settings.json", "records.json")
+PLAYER_FILES = ("settings.json", "records.json", "saved_game.json")
 
 
 def default_target():

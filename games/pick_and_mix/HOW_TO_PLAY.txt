@@ -1,0 +1,20 @@
+Two players, one device. Pick tiles, then mix them to get closest to the target.
+
+## Picking
+- The target sits between the two scores.
+- Take turns tapping a tile from the shared pool into your own zone, four each.
+- Picks are final.
+
+## Mixing
+- At any time, merge tiles in your own zone: tap a tile, tap an operation corner, then tap another of your tiles.
+- Your zone's Undo takes back merges. Double-tapping empty space in your zone does too.
+- When you are happy, tap Lock in.
+
+## Scoring
+- Your tile closest to the target counts.
+- The winner scores the winning margin, up to 10, plus 3 more for hitting the target exactly. A tie scores nothing.
+- The results show the best answer each player's tiles could have made.
+- The loser picks first next round. First to the match score wins.
+
+## Settings
+Choose the pool of numbers (Standard, Primes, Cubes, Factor-rich, All large or Small) and the score that wins the match.
