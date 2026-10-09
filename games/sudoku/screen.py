@@ -6,8 +6,9 @@ gamecore/game.py: open_settings() puts a gear in the header, and
 header_subtitle describes the puzzle ("9×9 · Medium"). The subtitle shows
 the level the puzzle actually reached, which is rarely easier than asked.
 
-Play: tap an empty cell to open the number picker beside it, then tap a
-number to write it, or Clear to empty the cell. Notes mode in the picker
+Play: tap an empty cell to open the number picker under the board, so the
+whole grid stays in view. Tap a number to write it, or Clear to empty the
+cell. Notes mode in the picker
 toggles pencil marks instead, and the picker stays open so several can be
 marked. Tapping a given only highlights it. With "Remove notes" on, placing a number
 also removes it from notes in the same row, column and box, in one undo
@@ -456,7 +457,7 @@ class SudokuScreen(ui.View):
         self.undo_button.enabled = self.grid.can_undo() and not self.solved
 
     def cell_tapped(self, cell):
-        """Highlight the tapped cell and open the picker beside it.
+        """Highlight the tapped cell and open the picker under the board.
 
         A given is highlighted but never opens the picker; tapping it again
         clears the highlight. The cell the picker is open for, tapped again,
@@ -483,12 +484,16 @@ class SudokuScreen(ui.View):
 
         self.selected_cell = cell
         self.focus_cell = cell
-        board_x, board_y = self.board_view.frame[0], self.board_view.frame[1]
-        cell_x, cell_y, cell_width, cell_height = self.board_view.cell_frame(cell)
-        anchor = (board_x + cell_x, board_y + cell_y, cell_width, cell_height)
 
-        self.picker.show_beside(
-            anchor, (0, 0, self.width, self.height),
+        # The picker opens under the whole grid rather than beside the cell,
+        # so every number on the board stays visible while choosing. On a
+        # short screen it may rest over Undo and New puzzle.
+        board_x, board_y = self.board_view.frame[0], self.board_view.frame[1]
+        grid_left, grid_top, grid_side = self.board_view.board_rect()
+        grid_frame = (board_x + grid_left, board_y + grid_top, grid_side, grid_side)
+
+        self.picker.show_below(
+            grid_frame, (0, 0, self.width, self.height),
             current=self.grid.value_at(cell), notes=self.grid.notes_at(cell),
         )
         self.refresh()

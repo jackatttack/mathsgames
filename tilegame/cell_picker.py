@@ -1,5 +1,7 @@
 """
-A number picker that opens beside a tapped grid cell, for fill-in games.
+A number picker for fill-in games. show_beside opens it beside a tapped
+cell (Number Detective); show_below opens it under the whole board so the
+board stays in view (KenKen, Sudoku).
 
 KenKen and Sudoku use it. The screen owns which cell is selected; the
 picker only shows values and reports the one chosen through on_pick(value),
@@ -164,6 +166,32 @@ class CellPicker(ui.View):
             y = max(area_y + self.EDGE_INSET,
                     anchor_y - height - self.DISTANCE_FROM_CELL)
 
+        self._open_at(x, y, width, height, current, dimmed, notes)
+
+    def show_below(self, anchor_frame, area, current=None, dimmed=(), notes=()):
+        """Open under anchor_frame (usually the whole board), centred on it.
+
+        For screens where the picker must not hide the board. When the space
+        under the anchor is too short, the picker rests on the bottom edge of
+        area instead, the only case where it overlaps the anchor. Arguments
+        are as for show_beside.
+        """
+        width, height = self.preferred_size()
+        anchor_x, anchor_y, anchor_width, anchor_height = anchor_frame
+        area_x, area_y, area_width, area_height = area
+
+        x = anchor_x + anchor_width / 2 - width / 2
+        x = max(area_x + self.EDGE_INSET,
+                min(x, area_x + area_width - width - self.EDGE_INSET))
+
+        under_anchor = anchor_y + anchor_height + self.DISTANCE_FROM_CELL
+        lowest_top = area_y + area_height - self.EDGE_INSET - height
+        y = max(area_y + self.EDGE_INSET, min(under_anchor, lowest_top))
+
+        self._open_at(x, y, width, height, current, dimmed, notes)
+
+    def _open_at(self, x, y, width, height, current, dimmed, notes):
+        """Place, mark and show the picker, all inside the tap that opened it."""
         self.frame = (x, y, width, height)
         self.layout()
         self.update_marks(current, dimmed, notes)

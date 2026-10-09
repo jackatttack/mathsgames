@@ -43,7 +43,7 @@ GAMES = (
         icon="9",
         accent="violet",
         entry="games.sudoku.entry:create_view",
-        status="in development",
+        status="playable",
     ),
     GameInfo(
         game_id="pick_and_mix",

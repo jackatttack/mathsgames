@@ -5,7 +5,7 @@ Lives under the Maths Games shell and uses the header contract from
 gamecore/game.py: open_settings() puts a gear in the header, and
 header_subtitle describes the puzzle ("5×5 · + − × ÷").
 
-Play: tap a cell to open the number picker beside it, then tap a number to
+Play: tap a cell to open the number picker under the board, then tap a number to
 write it, or Clear to empty the cell. Tap the same cell again, or anywhere
 off the grid, to close the picker. With "Show mistakes" on, numbers that
 repeat in a row or column, and full cages that miss their target, turn
@@ -421,7 +421,7 @@ class KenKenScreen(ui.View):
         self.undo_button.enabled = self.grid.can_undo() and not self.solved
 
     def cell_tapped(self, cell):
-        """Open the picker beside cell; the same cell again, or None, closes it."""
+        """Open the picker under the board; the same cell again, or None, closes it."""
         if self.solved or cell is None:
             self.close_picker()
             return
@@ -432,12 +432,15 @@ class KenKenScreen(ui.View):
         self.selected_cell = cell
         dimmed = self.grid.values_seen_from(cell) if self.settings["dim_used"] else ()
 
+        # The picker opens under the whole grid rather than beside the cell,
+        # so every cage and number stays visible while choosing. On a short
+        # screen it may rest over Undo and New puzzle.
         board_x, board_y = self.board_view.frame[0], self.board_view.frame[1]
-        cell_x, cell_y, cell_width, cell_height = self.board_view.cell_frame(cell)
-        anchor = (board_x + cell_x, board_y + cell_y, cell_width, cell_height)
+        grid_left, grid_top, grid_side = self.board_view.board_rect()
+        grid_frame = (board_x + grid_left, board_y + grid_top, grid_side, grid_side)
 
-        self.picker.show_beside(
-            anchor, (0, 0, self.width, self.height),
+        self.picker.show_below(
+            grid_frame, (0, 0, self.width, self.height),
             current=self.grid.value_at(cell), notes=self.grid.notes_at(cell),
             dimmed=dimmed,
         )
