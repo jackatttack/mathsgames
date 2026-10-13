@@ -59,6 +59,8 @@ DEFAULT_SETTINGS = {
     "operations": list(rules.OPERATIONS),
     "show_mistakes": True,
     "dim_used": False,
+    "tidy_notes": True,
+    "highlight_complete": False,
 }
 
 
@@ -86,7 +88,7 @@ def load_settings():
     ):
         settings["operations"] = [name for name in rules.OPERATIONS if name in operations]
 
-    for key in ("show_mistakes", "dim_used"):
+    for key in ("show_mistakes", "dim_used", "tidy_notes", "highlight_complete"):
         if isinstance(saved.get(key), bool):
             settings[key] = saved[key]
 
@@ -156,6 +158,22 @@ class SettingsPanel(ui.View):
         self.dim_switch = ui.Switch()
         self.dim_switch.action = self.dim_changed
 
+        self.tidy_label = make_label(
+            "Remove notes when a number is placed",
+            ("AvenirNext-Medium", 15), TEXT, alignment=ui.ALIGN_LEFT,
+        )
+        self.tidy_label.number_of_lines = 2
+        self.tidy_switch = ui.Switch()
+        self.tidy_switch.action = self.tidy_changed
+
+        self.complete_label = make_label(
+            "Highlight completed numbers",
+            ("AvenirNext-Medium", 15), TEXT, alignment=ui.ALIGN_LEFT,
+        )
+        self.complete_label.number_of_lines = 2
+        self.complete_switch = ui.Switch()
+        self.complete_switch.action = self.complete_changed
+
         self.new_puzzle_button = make_button(
             "New puzzle", self.new_puzzle_tapped,
             background=theme.color("tile"), title_color=BACKGROUND,
@@ -172,6 +190,10 @@ class SettingsPanel(ui.View):
             self.mistakes_switch,
             self.dim_label,
             self.dim_switch,
+            self.tidy_label,
+            self.tidy_switch,
+            self.complete_label,
+            self.complete_switch,
             self.new_puzzle_button,
             self.done_button,
         ):
@@ -198,6 +220,12 @@ class SettingsPanel(ui.View):
         y += 56
         self.dim_label.frame = (left, y, column - switch_width - 12, 44)
         self.dim_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
+        y += 56
+        self.tidy_label.frame = (left, y, column - switch_width - 12, 44)
+        self.tidy_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
+        y += 56
+        self.complete_label.frame = (left, y, column - switch_width - 12, 44)
+        self.complete_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
         y += 68
         self.new_puzzle_button.frame = (left, y, column, 52)
         y += 68
@@ -213,6 +241,8 @@ class SettingsPanel(ui.View):
         }
         self.mistakes_switch.value = bool(self.draft["show_mistakes"])
         self.dim_switch.value = bool(self.draft["dim_used"])
+        self.tidy_switch.value = bool(self.draft["tidy_notes"])
+        self.complete_switch.value = bool(self.draft["highlight_complete"])
         self.hidden = False
         self.bring_to_front()
 
@@ -233,6 +263,12 @@ class SettingsPanel(ui.View):
 
     def dim_changed(self, sender):
         self.draft["dim_used"] = bool(sender.value)
+
+    def tidy_changed(self, sender):
+        self.draft["tidy_notes"] = bool(sender.value)
+
+    def complete_changed(self, sender):
+        self.draft["highlight_complete"] = bool(sender.value)
 
     def new_puzzle_tapped(self, sender):
         if self.screen.apply_settings(self.draft, force_new_puzzle=True):
@@ -405,8 +441,13 @@ class KenKenScreen(ui.View):
             for cell in self.grid.empty_cells()
             if self.grid.notes_at(cell)
         }
+        if self.settings["highlight_complete"] and not self.solved:
+            completed = self.grid.completed_values()
+        else:
+            completed = ()
         self.board_view.refresh_marks(
-            values, notes, self.selected_cell, conflicts, wrong_cages, self.solved
+            values, notes, self.selected_cell, conflicts, wrong_cages, self.solved,
+            completed=completed,
         )
 
         if self.solved:
@@ -442,7 +483,7 @@ class KenKenScreen(ui.View):
         self.picker.show_below(
             grid_frame, (0, 0, self.width, self.height),
             current=self.grid.value_at(cell), notes=self.grid.notes_at(cell),
-            dimmed=dimmed,
+            dimmed=dimmed, completed=self.grid.completed_values(),
         )
         self.refresh()
 
@@ -475,7 +516,9 @@ class KenKenScreen(ui.View):
         self.picker.hide_picker()
         self.selected_cell = None
 
-        if self.grid.set_value(cell, value):
+        if self.grid.set_value(
+            cell, value, clean_peer_notes=self.settings["tidy_notes"]
+        ):
             if rules.is_solved(self.puzzle, self.grid.rows()):
                 self.solve_seconds = time.time() - self.started
 

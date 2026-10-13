@@ -64,6 +64,7 @@ DEFAULT_SETTINGS = {
     "show_mistakes": True,
     "tidy_notes": True,
     "highlight": True,
+    "highlight_complete": False,
 }
 
 
@@ -93,7 +94,7 @@ def load_settings():
     elif settings["difficulty"] not in offered:
         settings["difficulty"] = hardest_offered(settings["size"])
 
-    for key in ("show_mistakes", "tidy_notes", "highlight"):
+    for key in ("show_mistakes", "tidy_notes", "highlight", "highlight_complete"):
         if isinstance(saved.get(key), bool):
             settings[key] = saved[key]
 
@@ -162,6 +163,14 @@ class SettingsPanel(ui.View):
             ("AvenirNext-Medium", 15), TEXT, alignment=ui.ALIGN_LEFT,
         )
         self.highlight_label.number_of_lines = 2
+
+        self.complete_label = make_label(
+            "Highlight completed numbers",
+            ("AvenirNext-Medium", 15), TEXT, alignment=ui.ALIGN_LEFT,
+        )
+        self.complete_label.number_of_lines = 2
+        self.complete_switch = ui.Switch()
+        self.complete_switch.action = self.complete_changed
         self.highlight_switch = ui.Switch()
         self.highlight_switch.action = self.highlight_changed
 
@@ -184,6 +193,8 @@ class SettingsPanel(ui.View):
             self.tidy_switch,
             self.highlight_label,
             self.highlight_switch,
+            self.complete_label,
+            self.complete_switch,
             self.new_puzzle_button,
             self.done_button,
         ):
@@ -215,6 +226,9 @@ class SettingsPanel(ui.View):
         y += 56
         self.highlight_label.frame = (left, y, column - switch_width - 12, 44)
         self.highlight_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
+        y += 56
+        self.complete_label.frame = (left, y, column - switch_width - 12, 44)
+        self.complete_switch.frame = (left + column - switch_width, y + 6, switch_width, 31)
         y += 68
         self.new_puzzle_button.frame = (left, y, column, 52)
         y += 68
@@ -227,6 +241,7 @@ class SettingsPanel(ui.View):
         self.mistakes_switch.value = bool(self.draft["show_mistakes"])
         self.tidy_switch.value = bool(self.draft["tidy_notes"])
         self.highlight_switch.value = bool(self.draft["highlight"])
+        self.complete_switch.value = bool(self.draft["highlight_complete"])
         self.hidden = False
         self.bring_to_front()
 
@@ -264,6 +279,9 @@ class SettingsPanel(ui.View):
 
     def highlight_changed(self, sender):
         self.draft["highlight"] = bool(sender.value)
+
+    def complete_changed(self, sender):
+        self.draft["highlight_complete"] = bool(sender.value)
 
     def new_puzzle_tapped(self, sender):
         if self.screen.apply_settings(self.draft, force_new_puzzle=True):
@@ -440,9 +458,13 @@ class SudokuScreen(ui.View):
             focus = self.focus_cell
         else:
             focus = None
+        if self.settings["highlight_complete"] and not self.solved:
+            completed = self.grid.completed_values()
+        else:
+            completed = ()
         self.board_view.refresh_marks(
             values, notes, self.selected_cell, conflicts, self.solved,
-            focus_cell=focus,
+            focus_cell=focus, completed=completed,
         )
 
         if self.solved:
@@ -495,6 +517,7 @@ class SudokuScreen(ui.View):
         self.picker.show_below(
             grid_frame, (0, 0, self.width, self.height),
             current=self.grid.value_at(cell), notes=self.grid.notes_at(cell),
+            completed=self.grid.completed_values(),
         )
         self.refresh()
 

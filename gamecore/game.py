@@ -14,6 +14,10 @@ features; all are optional, and a view without them still works:
     header_subtitle      a short string shown under the game's title
     on_header_changed    attached by the shell; call it after changing
                          header_subtitle so the header updates
+    handle_back()        called when Back is tapped; return True to stay in
+                         the game (for example after closing an overlay).
+                         Without it, the shell closes an open settings_panel
+                         instead of leaving the game.
 """
 
 from dataclasses import dataclass

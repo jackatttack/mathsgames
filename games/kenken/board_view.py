@@ -25,6 +25,7 @@ SELECTED_FILL = theme.color("button")
 SELECTED_OUTLINE = theme.color("tile")
 MISTAKE_COLOR = theme.color("coral")
 SOLVED_COLOR = theme.color("success")
+COMPLETE_COLOR = theme.color("success")   # every copy of a number placed size times
 
 
 class KenKenBoardView(ui.View):
@@ -51,6 +52,7 @@ class KenKenBoardView(ui.View):
         self.conflicts = set()
         self.wrong_cages = set()
         self.solved = False
+        self.completed = set()
 
     # --- what to show --------------------------------------------------------
 
@@ -63,9 +65,13 @@ class KenKenBoardView(ui.View):
         self.conflicts = set()
         self.wrong_cages = set()
         self.solved = False
+        self.completed = set()
         self.set_needs_display()
 
-    def refresh_marks(self, values, notes, selected_cell, conflicts, wrong_cages, solved):
+    def refresh_marks(self, values, notes, selected_cell, conflicts, wrong_cages, solved,
+                      completed=()):
+        """Show the player's marks. Numbers in completed are drawn green."""
+        self.completed = set(completed)
         self.values = values
         self.notes = dict(notes)
         self.selected_cell = selected_cell
@@ -203,6 +209,8 @@ class KenKenBoardView(ui.View):
                     color = SOLVED_COLOR
                 elif (row, col) in self.conflicts:
                     color = MISTAKE_COLOR
+                elif value in self.completed:
+                    color = COMPLETE_COLOR
                 else:
                     color = TEXT_COLOR
                 # Nudged down a little so the cage label has room.

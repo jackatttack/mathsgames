@@ -9,6 +9,8 @@ broken game never takes the app down.
 Game views may opt in to header features (see gamecore/game.py):
 open_settings() shows the gear, header_subtitle fills the subtitle line, and
 the shell attaches on_header_changed so a game can report a new subtitle.
+Back first closes an open settings panel (or asks the game's handle_back())
+and only then leaves the game.
 """
 
 import traceback
@@ -71,8 +73,28 @@ class AppShell(ui.View):
     def left_tapped(self, sender=None):
         if self.game_view is None:
             self.close()
-        else:
+        elif not self.game_handled_back():
             self.close_game()
+
+    def game_handled_back(self):
+        """Give the open game first use of Back. True when it used the tap.
+
+        A game may define handle_back() (see gamecore/game.py). Without it,
+        an open settings_panel, which every current game has, is closed
+        instead of leaving the game. Closing it discards the unsaved draft,
+        the same as dismissing it.
+        """
+        view = self.game_view
+        handle_back = getattr(view, "handle_back", None)
+        if callable(handle_back):
+            return bool(handle_back())
+
+        panel = getattr(view, "settings_panel", None)
+        if panel is not None and not panel.hidden:
+            tactile.haptic_tap()
+            panel.hidden = True
+            return True
+        return False
 
     def settings_tapped(self, sender=None):
         open_settings = getattr(self.game_view, "open_settings", None)

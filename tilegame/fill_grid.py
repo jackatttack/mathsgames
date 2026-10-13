@@ -111,6 +111,18 @@ class FillGrid:
                 seen.add(value)
         return seen
 
+    def completed_values(self):
+        """Values placed size times, right or wrong. A picker can mark these.
+
+        Counts placements only, so it never reveals whether they are correct.
+        """
+        counts = {}
+        for row in self._values:
+            for value in row:
+                if value is not None:
+                    counts[value] = counts.get(value, 0) + 1
+        return {value for value, count in counts.items() if count == self.size}
+
     # --- writing values ------------------------------------------------------
 
     def can_set(self, cell, value):

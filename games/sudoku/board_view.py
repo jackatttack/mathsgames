@@ -26,6 +26,7 @@ SELECTED_FILL = theme.color("button")
 SELECTED_OUTLINE = theme.color("tile")
 MISTAKE_COLOR = theme.color("coral")
 SOLVED_COLOR = theme.color("success")
+COMPLETE_COLOR = theme.color("success")       # every copy of a number placed size times
 PEER_FILL = theme.color("assist_peer")        # row, column and box of the focus cell
 MATCH_FILL = theme.color("assist_match")      # cells holding the focus cell's number
 MATCH_NOTE_COLOR = theme.color("sky")         # pencil marks of the focus number
@@ -55,6 +56,7 @@ class SudokuBoardView(ui.View):
         self.conflicts = set()
         self.solved = False
         self.focus_cell = None
+        self.completed = set()
 
     # --- what to show --------------------------------------------------------
 
@@ -68,12 +70,15 @@ class SudokuBoardView(ui.View):
         self.conflicts = set()
         self.solved = False
         self.focus_cell = None
+        self.completed = set()
         self.set_needs_display()
 
     def refresh_marks(self, values, notes, selected_cell, conflicts, solved,
-                      focus_cell=None):
+                      focus_cell=None, completed=()):
         """Show the player's marks. focus_cell, when given, is highlighted
-        with its row, column, box and every copy of its number."""
+        with its row, column, box and every copy of its number. Numbers in
+        completed are drawn green wherever they appear."""
+        self.completed = set(completed)
         self.values = values
         self.notes = dict(notes)
         self.selected_cell = selected_cell
@@ -215,6 +220,8 @@ class SudokuBoardView(ui.View):
                     color = SOLVED_COLOR
                 elif cell in self.conflicts and not given:
                     color = MISTAKE_COLOR
+                elif value in self.completed:
+                    color = COMPLETE_COLOR
                 else:
                     color = GIVEN_COLOR if given else PLAYER_COLOR
                 draw_centred_text(

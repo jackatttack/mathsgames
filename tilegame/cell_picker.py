@@ -31,6 +31,7 @@ BACKGROUND = theme.color("background")
 BUTTON_COLOR = theme.color("button")
 ACCENT = theme.color("tile")       # the cell's current value
 NOTE_COLOR = theme.color("sky")    # noted values and the Notes button when on
+COMPLETE_COLOR = theme.color("success")   # values already placed everywhere
 
 
 class CellPicker(ui.View):
@@ -84,6 +85,7 @@ class CellPicker(ui.View):
         self.add_subview(self.clear_button)
 
         self._show_notes_button()
+        self._completed = set()
 
     # --- setup ---------------------------------------------------------------
 
@@ -144,12 +146,14 @@ class CellPicker(ui.View):
 
     # --- showing -------------------------------------------------------------
 
-    def show_beside(self, anchor_frame, area, current=None, dimmed=(), notes=()):
+    def show_beside(self, anchor_frame, area, current=None, dimmed=(), notes=(),
+                    completed=()):
         """Open beside anchor_frame, kept inside area (both in superview points).
 
         Opens below the anchor when it fits, otherwise above. current is the
         cell's value, dimmed are values shown muted but still tappable, and
-        notes are the cell's pencil marks, shown in notes mode.
+        notes are the cell's pencil marks, shown in notes mode. completed are
+        values already placed everywhere, shown green but still tappable.
         """
         width, height = self.preferred_size()
         anchor_x, anchor_y, anchor_width, anchor_height = anchor_frame
@@ -166,9 +170,10 @@ class CellPicker(ui.View):
             y = max(area_y + self.EDGE_INSET,
                     anchor_y - height - self.DISTANCE_FROM_CELL)
 
-        self._open_at(x, y, width, height, current, dimmed, notes)
+        self._open_at(x, y, width, height, current, dimmed, notes, completed)
 
-    def show_below(self, anchor_frame, area, current=None, dimmed=(), notes=()):
+    def show_below(self, anchor_frame, area, current=None, dimmed=(), notes=(),
+                   completed=()):
         """Open under anchor_frame (usually the whole board), centred on it.
 
         For screens where the picker must not hide the board. When the space
@@ -188,21 +193,27 @@ class CellPicker(ui.View):
         lowest_top = area_y + area_height - self.EDGE_INSET - height
         y = max(area_y + self.EDGE_INSET, min(under_anchor, lowest_top))
 
-        self._open_at(x, y, width, height, current, dimmed, notes)
+        self._open_at(x, y, width, height, current, dimmed, notes, completed)
 
-    def _open_at(self, x, y, width, height, current, dimmed, notes):
+    def _open_at(self, x, y, width, height, current, dimmed, notes, completed):
         """Place, mark and show the picker, all inside the tap that opened it."""
         self.frame = (x, y, width, height)
         self.layout()
-        self.update_marks(current, dimmed, notes)
+        self.update_marks(current, dimmed, notes, completed)
         self.hidden = False
         self.bring_to_front()
 
-    def update_marks(self, current=None, dimmed=(), notes=()):
-        """Redraw which value is current, dimmed or noted, without moving."""
+    def update_marks(self, current=None, dimmed=(), notes=(), completed=None):
+        """Redraw which value is current, dimmed, noted or completed, without moving.
+
+        completed=None keeps the previous completed values: they only change
+        when a value is written, and that closes the picker.
+        """
         self._current = current
         self._dimmed = set(dimmed)
         self._notes = set(notes)
+        if completed is not None:
+            self._completed = set(completed)
         self._show_marks()
 
     def hide_picker(self):
@@ -231,6 +242,8 @@ class CellPicker(ui.View):
                 button.background_color = NOTE_COLOR if noted else BUTTON_COLOR
                 if noted:
                     button.tint_color = BACKGROUND
+                elif value in self._completed:
+                    button.tint_color = COMPLETE_COLOR
                 elif value in self._dimmed:
                     button.tint_color = MUTED
                 else:
@@ -238,6 +251,9 @@ class CellPicker(ui.View):
             elif value == self._current:
                 button.background_color = ACCENT
                 button.tint_color = BACKGROUND
+            elif value in self._completed:
+                button.background_color = BUTTON_COLOR
+                button.tint_color = COMPLETE_COLOR
             elif value in self._dimmed:
                 button.background_color = BUTTON_COLOR
                 button.tint_color = MUTED
