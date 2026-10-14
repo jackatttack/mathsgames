@@ -18,8 +18,9 @@ import traceback
 import ui
 
 from feel import tactile
-from gamecore.game import load_entry
+from gamecore.game import load_entry, refresh_game_modules
 from launcher.header import HeaderBar
+from launcher.appearance import AppearanceView
 from launcher.help_card import HelpCardOverlay
 from gamecore import how_to_play
 from launcher.home import HomeView
@@ -38,6 +39,7 @@ class AppShell(ui.View):
     def __init__(self, games, **kwargs):
         super().__init__(**kwargs)
         self.background_color = theme.color("background")
+        self.games = list(games)
         self.game_view = None
         self.help_card = None       # the open game's HelpCard, if it has one
         self.help_accent = theme.color("tile")
@@ -61,7 +63,8 @@ class AppShell(ui.View):
     # --- header --------------------------------------------------------------
 
     def show_home_header(self):
-        self.header.show(HOME_TITLE, HOME_SUBTITLE, back=False, settings=False)
+        # On the home screen the gear opens Appearance.
+        self.header.show(HOME_TITLE, HOME_SUBTITLE, back=False, settings=True)
 
     def game_header_changed(self):
         """Called by a game after it changes its header_subtitle."""
@@ -97,9 +100,26 @@ class AppShell(ui.View):
         return False
 
     def settings_tapped(self, sender=None):
+        """The gear: the open game's settings, or Appearance on the home screen."""
+        if self.game_view is None:
+            self.open_appearance()
+            return
         open_settings = getattr(self.game_view, "open_settings", None)
         if callable(open_settings):
             open_settings()
+
+    # --- appearance ----------------------------------------------------------
+
+    def open_appearance(self):
+        """Show the Appearance screen like a game. Back leaves without saving."""
+        tactile.haptic_tap()
+        self.show_game(AppearanceView(self.games, save=theme.save_choices), "Appearance")
+
+    def apply_theme(self):
+        """Repaint the launcher in the current theme. Games repaint when opened."""
+        self.background_color = theme.color("background")
+        self.header.recolor()
+        self.home.recolor()
 
     def help_tapped(self, sender=None):
         """Show the open game's how-to-play card."""
@@ -111,10 +131,13 @@ class AppShell(ui.View):
     def open_game(self, game):
         """Build the chosen game's view and show it in place of the home screen."""
         tactile.haptic_tap()
+        theme.set_game(game.game_id)
+        refresh_game_modules()
         try:
             create_view = load_entry(game)
             view = create_view()
         except Exception:
+            theme.set_game(None)
             traceback.print_exc()
             self.home.show_message(
                 "Couldn't open %s. The console has the details." % game.title
@@ -158,11 +181,13 @@ class AppShell(ui.View):
         tactile.haptic_tap()
         self.help_overlay.close_tapped()
         self.help_card = None
+        theme.set_game(None)
         if self.game_view is not None:
             self.remove_subview(self.game_view)
             self.game_view = None
         self.show_home_header()
         self.home.hidden = False
+        self.apply_theme()      # Appearance may have changed the theme
 
     # --- layout --------------------------------------------------------------
 

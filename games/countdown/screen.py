@@ -90,6 +90,15 @@ DEFAULT_SETTINGS = {
 }
 
 
+# --- theme editor preview ----------------------------------------------------
+
+# The theme editor shows this screen with preview=True: a seeded board, no
+# settings or records read or written, and no touches. The factors card is
+# shown so the panel colour can be seen.
+PREVIEW_SEED = 2026
+PREVIEW_SETTINGS = dict(DEFAULT_SETTINGS, show_factors=True)
+
+
 def load_settings():
     """Return saved settings, using defaults for anything missing or invalid."""
     settings = dict(DEFAULT_SETTINGS)
@@ -336,11 +345,16 @@ class CountdownScreen(ui.View):
     BOTTOM_BAR = 112      # leaves room above the home indicator
     FACTORS_CARD_HEIGHT = 64   # compact, leaving empty board for undo
 
-    def __init__(self, board, **kwargs):
+    def __init__(self, board, preview=False, **kwargs):
         super().__init__(**kwargs)
+        self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
-        self.settings = load_settings()
-        self.records = RecordBook(RECORDS_PATH)
+        if preview:
+            self.settings = dict(PREVIEW_SETTINGS)
+            self.records = None     # a preview never reads or writes best times
+        else:
+            self.settings = load_settings()
+            self.records = RecordBook(RECORDS_PATH)
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
@@ -384,6 +398,8 @@ class CountdownScreen(ui.View):
             self.add_subview(view)
 
         self.start_new_run()
+        if preview:
+            self.touch_enabled = False
 
     # --- header contract -----------------------------------------------------
 
@@ -481,7 +497,7 @@ class CountdownScreen(ui.View):
         self.run_key = self.current_record_key()
         self.run_result = None
 
-        best = self.records.best(self.run_key)
+        best = self.records.best(self.run_key) if self.records is not None else None
         self.note = (
             "Best for these rules: {}".format(format_duration(best))
             if best is not None else None
@@ -495,6 +511,8 @@ class CountdownScreen(ui.View):
 
     def finish_run(self):
         """Store the finished run's time. Called once, inside the final tap."""
+        if self.records is None:
+            return
         self.run_result = self.records.add(self.run_key, self.run.elapsed())
 
     def describe_result(self):
@@ -514,8 +532,14 @@ class CountdownScreen(ui.View):
 
         Returns False, changing nothing, while a merge is animating.
         """
+        if self.preview:
+            from random import Random
+            rng = Random(PREVIEW_SEED)   # the same sample board every time
+        else:
+            rng = None
         round_ = rules.deal_round(
             self.settings["big_count"],
+            rng=rng,
             difficulty=self.settings["difficulty"],
         )
 

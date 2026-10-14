@@ -77,6 +77,10 @@ DEFAULT_SETTINGS = {
     "match_points": 30,
 }
 
+# The theme editor shows this screen with preview=True: a seeded match with
+# default settings, no settings read or written, and no touches.
+PREVIEW_SEED = 2026
+
 
 def load_settings():
     """Return saved settings, using defaults for anything missing or invalid."""
@@ -368,10 +372,16 @@ class SettingsPanel(ui.View):
 class PickAndMixScreen(ui.View):
     """Pick & Mix under the shell header: one match, round after round."""
 
-    def __init__(self, rng=None, **kwargs):
+    def __init__(self, rng=None, preview=False, **kwargs):
         super().__init__(**kwargs)
+        self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
-        self.settings = load_settings()
+        if preview:
+            from random import Random
+            self.settings = dict(DEFAULT_SETTINGS)
+            rng = rng or Random(PREVIEW_SEED)   # the same sample every time
+        else:
+            self.settings = load_settings()
         self.rng = rng
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
@@ -412,6 +422,8 @@ class PickAndMixScreen(ui.View):
             self.add_subview(view)
 
         self.start_new_match()
+        if preview:
+            self.touch_enabled = False
 
     # --- header contract -----------------------------------------------------
 

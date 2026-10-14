@@ -132,7 +132,7 @@ class HomeView(ui.View):
         # Added last so it sits above the cards when shown.
         self.message_label = ui.Label()
         self.message_label.font = theme.font("body")
-        self.message_label.text_color = theme.color("coral")
+        self.message_label.text_color = theme.color("mistake")
         self.message_label.number_of_lines = 2
         self.message_label.hidden = True
         self.add_subview(self.message_label)
@@ -157,3 +157,11 @@ class HomeView(ui.View):
         """Show a short problem message at the bottom of the home screen."""
         self.message_label.text = text
         self.message_label.hidden = False
+
+    def recolor(self):
+        """Repaint in the current theme colours, after a theme change."""
+        self.background_color = theme.color("background")
+        self.scroll.background_color = theme.color("background")
+        self.message_label.text_color = theme.color("mistake")
+        for card in self.cards:
+            card.set_needs_display()

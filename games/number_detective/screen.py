@@ -44,7 +44,7 @@ MUTED = theme.color("muted")
 BUTTON_COLOR = theme.color("button")
 ACCENT = theme.color("tile")
 SUCCESS = theme.color("success")
-MISTAKE = theme.color("coral")
+MISTAKE = theme.color("mistake")
 
 # --- editable layout, in points ---------------------------------------------
 
@@ -68,6 +68,11 @@ DEFAULT_SETTINGS = {
     "pool": "classic",
     "hints": True,
 }
+
+# The theme editor shows this screen with preview=True: a seeded case with
+# default settings, a question card armed, a tile chosen and the picker's
+# tile outlined, no settings read or written, and no touches.
+PREVIEW_SEED = 2026
 
 
 def load_settings():
@@ -210,10 +215,16 @@ class SettingsPanel(ui.View):
 class DetectiveScreen(ui.View):
     """Number Detective under the shell header: one case at a time."""
 
-    def __init__(self, rng=None, **kwargs):
+    def __init__(self, rng=None, preview=False, **kwargs):
         super().__init__(**kwargs)
+        self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
-        self.settings = load_settings()
+        if preview:
+            from random import Random
+            self.settings = dict(DEFAULT_SETTINGS)
+            rng = rng or Random(PREVIEW_SEED)   # the same sample every time
+        else:
+            self.settings = load_settings()
         self.rng = rng
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
@@ -259,6 +270,9 @@ class DetectiveScreen(ui.View):
             self.add_subview(view)
 
         self.start_new_game()
+        if preview:
+            self.show_preview_sample()
+            self.touch_enabled = False
 
     # --- header contract -----------------------------------------------------
 
@@ -319,6 +333,17 @@ class DetectiveScreen(ui.View):
         self.notes = [set() for _ in range(rules.TILE_COUNT)]
         self.picker.hide_picker()
         self.picker.set_values(self.game.pool.values)
+        self.refresh()
+
+    def show_preview_sample(self):
+        """Arm the first question card, choose a tile for it and outline the
+        last tile as the one being named, so the preview shows every colour
+        a choice can affect. Preview only; nothing is saved."""
+        self.armed = 0
+        question = self.armed_question()
+        if question is not None and question.arity:
+            self.selection = [0]
+        self.picker_tile = rules.TILE_COUNT - 1
         self.refresh()
 
     def armed_question(self):

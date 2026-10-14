@@ -68,6 +68,25 @@ DEFAULT_SETTINGS = {
 }
 
 
+# --- theme editor preview ----------------------------------------------------
+
+# The theme editor shows this screen with preview=True: a fixed sample, no
+# disk use and no touches. The seed fixes the sample, so every swatch tap
+# shows the same board. Completed numbers are highlighted so that mark shows.
+PREVIEW_SEED = 2026
+PREVIEW_SETTINGS = dict(DEFAULT_SETTINGS, highlight_complete=True)
+_preview_puzzle = None      # dealt once, then reused for speed
+
+
+def preview_puzzle():
+    """The sample puzzle, dealt once from PREVIEW_SEED."""
+    global _preview_puzzle
+    if _preview_puzzle is None:
+        from random import Random
+        _preview_puzzle = rules.generate_puzzle(9, "easy", rng=Random(PREVIEW_SEED))
+    return _preview_puzzle
+
+
 def hardest_offered(size):
     return rules.DIFFICULTIES_BY_SIZE[size][-1]
 
@@ -298,10 +317,11 @@ class SudokuScreen(ui.View):
     SIDE_MARGIN = 16
     BOTTOM_BAR = 80
 
-    def __init__(self, **kwargs):
+    def __init__(self, preview=False, **kwargs):
         super().__init__(**kwargs)
+        self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
-        self.settings = load_settings()
+        self.settings = dict(PREVIEW_SETTINGS) if preview else load_settings()
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
@@ -336,7 +356,10 @@ class SudokuScreen(ui.View):
         ):
             self.add_subview(view)
 
-        if not self.resume_saved_game():
+        if preview:
+            self.show_preview_sample()
+            self.touch_enabled = False
+        elif not self.resume_saved_game():
             self.new_puzzle()
 
     # --- header contract -----------------------------------------------------
@@ -410,10 +433,63 @@ class SudokuScreen(ui.View):
             size, size, LEVEL_LABELS.get(self.puzzle.level, "Easy")))
         self.refresh()
 
+    def show_preview_sample(self):
+        """Show the fixed sample the theme editor previews. Nothing is saved.
+
+        Every mark a colour choice can affect is on screen: givens, player
+        numbers, a completed number, notes, a clash, and a selected cell with
+        its row, column, box and matching numbers highlighted. The marks are
+        made through the same FillGrid calls as real play.
+        """
+        puzzle = preview_puzzle()
+        grid = self.fresh_grid(puzzle)
+        size = puzzle.size
+        empty = [
+            (row, col)
+            for row in range(size) for col in range(size)
+            if puzzle.givens[row][col] is None
+        ]
+
+        def answer(cell):
+            return puzzle.solution[cell[0]][cell[1]]
+
+        # A completed number: every empty cell that should hold it, filled.
+        completed_value = answer(empty[0])
+        for cell in empty:
+            if answer(cell) == completed_value:
+                grid.set_value(cell, completed_value, clean_peer_notes=False)
+        remaining = [cell for cell in empty if grid.value_at(cell) is None]
+
+        # Notes in two cells: the right answer and one other candidate.
+        for cell in remaining[1:3]:
+            for value in sorted({answer(cell), answer(cell) % size + 1}):
+                grid.toggle_note(cell, value)
+
+        # A clash: a value already given in the same row.
+        clash_cell = remaining[-1]
+        row_givens = [
+            value for value in puzzle.givens[clash_cell[0]]
+            if value is not None and value != completed_value
+        ]
+        if row_givens:
+            grid.set_value(clash_cell, row_givens[0], clean_peer_notes=False)
+
+        self.show_puzzle(puzzle, grid, seconds_played=0)
+        # Select a placed copy of the completed number, so its row, column,
+        # box and matching numbers are highlighted too.
+        self.selected_cell = empty[0]
+        self.focus_cell = empty[0]
+        self.refresh()
+
     # --- saved game ----------------------------------------------------------
 
     def save_game(self):
-        """Save the puzzle in progress now. A solved puzzle discards the save."""
+        """Save the puzzle in progress now. A solved puzzle discards the save.
+
+        A preview never touches disk.
+        """
+        if self.preview:
+            return
         if self.solved:
             saved_game.discard_game(SAVE_PATH)
             return

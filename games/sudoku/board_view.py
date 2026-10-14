@@ -16,15 +16,15 @@ from style import theme
 from tilegame.widgets import draw_centred_text
 
 
-CELL_COLOR = theme.color("surface")
-GRID_LINE_COLOR = theme.color("button")
-BOX_WALL_COLOR = theme.color("muted")
-GIVEN_COLOR = theme.color("text")
-PLAYER_COLOR = theme.color("sky")
-NOTE_COLOR = theme.color("muted")
-SELECTED_FILL = theme.color("button")
-SELECTED_OUTLINE = theme.color("tile")
-MISTAKE_COLOR = theme.color("coral")
+CELL_COLOR = theme.color("board")
+GRID_LINE_COLOR = theme.color("grid_line")
+BOX_WALL_COLOR = theme.color("box_wall")
+GIVEN_COLOR = theme.color("given")
+PLAYER_COLOR = theme.color("player_number")
+NOTE_COLOR = theme.color("note")
+SELECTED_FILL = theme.color("selection_fill")
+SELECTED_OUTLINE = theme.color("selection")
+MISTAKE_COLOR = theme.color("mistake")
 SOLVED_COLOR = theme.color("success")
 COMPLETE_COLOR = theme.color("success")       # every copy of a number placed size times
 PEER_FILL = theme.color("assist_peer")        # row, column and box of the focus cell

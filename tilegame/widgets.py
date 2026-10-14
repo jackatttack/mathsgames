@@ -13,7 +13,9 @@ BACKGROUND = theme.color("background")
 TEXT = theme.color("text")
 MUTED = theme.color("muted")
 BUTTON_COLOR = theme.color("button")
-ACCENT = theme.color("tile")       # the main action and the target chip
+ACCENT = theme.color("tile")       # the main action and chosen options
+TARGET_CHIP = theme.color("target_chip")             # the number to make
+TARGET_CHIP_TEXT = theme.color("target_chip_text")   # MAKE and the target on it
 SUCCESS = theme.color("success")   # a solved target
 
 
@@ -273,16 +275,16 @@ class TargetBanner(ui.View):
 
         x, y, w, h = self.chip_frame()
 
-        ui.set_color(SUCCESS if self.solved else ACCENT)
+        ui.set_color(SUCCESS if self.solved else TARGET_CHIP)
         ui.Path.rounded_rect(x, y, w, h, self.CHIP_RADIUS).fill()
 
-        draw_centred_text("MAKE", ("AvenirNext-DemiBold", 12), BACKGROUND,
+        draw_centred_text("MAKE", ("AvenirNext-DemiBold", 12), TARGET_CHIP_TEXT,
                           x, y + 8, w, 16)
 
         digits = max(2, len(str(self.target)))
         size = max(20, min(52, h * 0.55, w * 1.3 / digits))
         draw_centred_text(str(self.target), ("AvenirNext-Bold", size),
-                          BACKGROUND, x, y + 20, w, h - 24)
+                          TARGET_CHIP_TEXT, x, y + 20, w, h - 24)
 
         self._draw_stat(self.left[0], self.left[1], 0, x)
         self._draw_stat(self.right[0], self.right[1], x + w,

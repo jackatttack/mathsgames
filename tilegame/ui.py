@@ -23,6 +23,10 @@ from .model import (
 # Colours come from the shared Maths Games theme.
 TILE_COLOR = theme.color("tile")
 TEXT_COLOR = theme.color("tile_text")
+OP_TEXT_COLOR = theme.color("op_text")
+BORDER_COLOR = theme.color("tile_border")
+BORDER_ARMED_COLOR = theme.color("tile_border_armed")
+BORDER_VALID_COLOR = theme.color("tile_border_valid")
 
 OP_COLORS = {
     "+": theme.color("op_add"),
@@ -97,7 +101,7 @@ class MultipleMergeNumberView(ui.View):
                 "AvenirNext-Bold",
                 18,
             )
-            label.text_color = "#FFFFFF"
+            label.text_color = OP_TEXT_COLOR
             label.background_color = "clear"
             label.hidden = True
 
@@ -273,11 +277,11 @@ class MultipleMergeNumberView(ui.View):
         border_width = 4 if valid else 2
 
         if valid:
-            border_color = "#F7F9FC"
+            border_color = BORDER_VALID_COLOR
         elif selected and armed:
-            border_color = "#FFFFFF"
+            border_color = BORDER_ARMED_COLOR
         else:
-            border_color = "#FFFFFF36"
+            border_color = BORDER_COLOR
 
         border = ui.Path.rounded_rect(
             border_width / 2,

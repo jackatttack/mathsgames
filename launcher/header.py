@@ -87,6 +87,16 @@ class HeaderBar(ui.View):
     def set_subtitle(self, text):
         self.subtitle_label.text = text or ""
 
+    def recolor(self):
+        """Repaint in the current theme colours, after a theme change."""
+        self.background_color = theme.color("background")
+        for button in (self.close_button, self.back_button,
+                       self.settings_button, self.help_button):
+            button.background_color = theme.color("button")
+            button.tint_color = theme.color("text")
+        self.title_label.text_color = theme.color("text")
+        self.subtitle_label.text_color = theme.color("muted")
+
     def layout(self):
         width = self.width
         middle = self.height / 2

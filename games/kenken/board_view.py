@@ -16,14 +16,14 @@ from style import theme
 from tilegame.widgets import draw_centred_text
 
 
-CELL_COLOR = theme.color("surface")
-GRID_LINE_COLOR = theme.color("button")
-CAGE_WALL_COLOR = theme.color("muted")
-TEXT_COLOR = theme.color("text")
-NOTE_COLOR = theme.color("muted")
-SELECTED_FILL = theme.color("button")
-SELECTED_OUTLINE = theme.color("tile")
-MISTAKE_COLOR = theme.color("coral")
+CELL_COLOR = theme.color("board")
+GRID_LINE_COLOR = theme.color("grid_line")
+CAGE_WALL_COLOR = theme.color("box_wall")
+TEXT_COLOR = theme.color("given")          # numbers and cage labels
+NOTE_COLOR = theme.color("note")
+SELECTED_FILL = theme.color("selection_fill")
+SELECTED_OUTLINE = theme.color("selection")
+MISTAKE_COLOR = theme.color("mistake")
 SOLVED_COLOR = theme.color("success")
 COMPLETE_COLOR = theme.color("success")   # every copy of a number placed size times
 

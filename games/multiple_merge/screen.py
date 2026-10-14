@@ -60,7 +60,7 @@ ACCENT = theme.color("tile")                 # the main action
 
 CHIP_UNREACHABLE = theme.color("chip_disabled")
 CHIP_UNREACHABLE_TEXT = theme.color("chip_disabled_text")
-CHIP_OPEN = theme.color("button")            # makeable, not found yet
+CHIP_OPEN = theme.color("open_chip")         # makeable, not found yet
 CHIP_FOUND = theme.color("success")          # found, or target mode solved
 PLAYER_COLORS = (theme.color("player_one"), theme.color("player_two"))
 
@@ -98,6 +98,12 @@ DEFAULT_SETTINGS = {
     "board_style": target_mode.DEFAULT_BOARD_STYLE,
     "players": 1,
 }
+
+# The theme editor shows this screen with preview=True: Classic with a
+# seeded board and one target already found, no settings or records read or
+# written, and no touches.
+PREVIEW_SEED = 2026
+PREVIEW_SETTINGS = dict(DEFAULT_SETTINGS)
 
 # On/off settings that change how the board looks or helps, never the deal:
 # changing one keeps the board in play.
@@ -280,7 +286,12 @@ class ClassicController:
         return scores    # RunResult once every makeable target is found
 
     def new_round(self):
-        return classic.deal_round(self.screen.settings["multiple"])
+        if self.screen.preview:
+            from random import Random
+            rng = Random(PREVIEW_SEED)   # the same sample board every time
+        else:
+            rng = None
+        return classic.deal_round(self.screen.settings["multiple"], rng=rng)
 
     def begin(self, round_):
         self.round = round_
@@ -305,7 +316,8 @@ class ClassicController:
         if (newly_found and round_.is_complete() and self.result is None
                 and not self.two_players):
             seconds = time.monotonic() - self.started
-            self.result = self.screen.records.add(self.record_key(), seconds)
+            if self.screen.records is not None:
+                self.result = self.screen.records.add(self.record_key(), seconds)
 
     def hint_blocker(self, target):
         """A reason no hint can be given for target, or None."""
@@ -341,7 +353,8 @@ class ClassicController:
                     len(round_.found), makeable,
                     format_duration(time.monotonic() - self.started),
                 )
-                best = screen.records.best(self.record_key())
+                best = (screen.records.best(self.record_key())
+                        if screen.records is not None else None)
                 if best is not None:
                     text += " · best {}".format(format_duration(best))
                 screen.status_label.text = text
@@ -722,11 +735,16 @@ class GameScreen(ui.View):
     SIDE_MARGIN = 16
     BOTTOM_BAR = 112      # leaves room above the home indicator
 
-    def __init__(self, board, **kwargs):
+    def __init__(self, board, preview=False, **kwargs):
         super().__init__(**kwargs)
+        self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
-        self.settings = load_settings()
-        self.records = RecordBook(RECORDS_PATH)
+        if preview:
+            self.settings = dict(PREVIEW_SETTINGS)
+            self.records = None     # a preview never reads or writes best times
+        else:
+            self.settings = load_settings()
+            self.records = RecordBook(RECORDS_PATH)
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
@@ -775,6 +793,9 @@ class GameScreen(ui.View):
             self.add_subview(view)
 
         self.start_new_board()
+        if preview:
+            self.show_preview_found()
+            self.touch_enabled = False
 
     @property
     def controller(self):
@@ -876,6 +897,15 @@ class GameScreen(ui.View):
         controller.begin(round_)
         self.refresh()
         return True
+
+    def show_preview_found(self):
+        """Mark one reachable target found, so the preview shows found, open
+        and unreachable chips together. Preview only; nothing is saved."""
+        round_ = self.controller.round
+        reachable = sorted(round_.reachable)
+        if reachable:
+            round_.record(reachable[0])
+        self.refresh()
 
     def refresh(self):
         classic_mode = self.settings["mode"] == "classic"

@@ -25,7 +25,7 @@ TEXT = theme.color("text")
 MUTED = theme.color("muted")
 BUTTON_COLOR = theme.color("button")
 ACCENT = theme.color("tile")          # tiles chosen for a question
-OPEN_OUTLINE = theme.color("sky")     # the tile the picker is open for
+OPEN_OUTLINE = theme.color("open_outline")   # the tile the picker is open for
 SUCCESS = theme.color("success")      # revealed values
 
 

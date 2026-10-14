@@ -22,6 +22,7 @@ features; all are optional, and a view without them still works:
 
 from dataclasses import dataclass
 import importlib
+import sys
 
 
 # Where a game stands. The launcher can show this beside the title.
@@ -85,3 +86,20 @@ def load_entry(game):
     module_name, function_name = game.entry_parts()
     module = importlib.import_module(module_name)
     return getattr(module, function_name)
+
+
+# Packages re-imported each time a game opens (and for each theme preview),
+# so their module-level colour constants are read again (style/theme.py).
+REFRESHED_PACKAGES = ("games", "tilegame")
+
+
+def refresh_game_modules():
+    """Forget games.* and tilegame.* so the next import reads current colours.
+
+    Views already built keep the modules they were made with. The launcher
+    never imports either package when it loads, so nothing it holds goes
+    stale.
+    """
+    for name in list(sys.modules):
+        if name.split(".")[0] in REFRESHED_PACKAGES:
+            del sys.modules[name]
