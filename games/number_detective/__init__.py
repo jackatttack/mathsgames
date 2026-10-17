@@ -1,1 +1,0 @@
-"""Number Detective for Maths Games: crack four hidden numbers with arithmetic clues."""
