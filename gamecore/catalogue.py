@@ -3,12 +3,24 @@ The Maths Games catalogue: every game the launcher offers, in display order.
 
 This list is the one place a game is added to the app. Nothing here imports
 game code, so listing games stays fast and needs no UIKit.
+
+RELEASED games ship in the public build. IN_DEVELOPMENT games are offered
+only in a development copy: one with a DEV_BUILD file at the project root.
+tools/stage_release.py never ships that file or those games' folders.
+GAMES is what this copy offers; the launcher, Appearance and the smokes
+all read it.
 """
+
+import os
 
 from gamecore.game import GameInfo
 
 
-GAMES = (
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEV_MARKER = "DEV_BUILD"
+
+
+RELEASED = (
     GameInfo(
         game_id="multiple_merge",
         title="Multiple Merge",
@@ -54,6 +66,10 @@ GAMES = (
         entry="games.pick_and_mix.entry:create_view",
         status="playable",
     ),
+)
+
+# Not good enough to ship yet. Listed after the released games in a dev copy.
+IN_DEVELOPMENT = (
     GameInfo(
         game_id="number_detective",
         title="Number Detective",
@@ -64,3 +80,11 @@ GAMES = (
         status="in development",
     ),
 )
+
+
+def is_dev_copy():
+    """True when this copy has the DEV_BUILD marker at its root."""
+    return os.path.exists(os.path.join(PROJECT_DIR, DEV_MARKER))
+
+
+GAMES = (RELEASED + IN_DEVELOPMENT) if is_dev_copy() else RELEASED
