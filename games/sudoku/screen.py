@@ -14,6 +14,18 @@ marked. Tapping a given only highlights it. With "Remove notes" on, placing a nu
 also removes it from notes in the same row, column and box, in one undo
 step. With "Show mistakes" on, numbers that clash turn coral.
 
+Second way in: the number tray under the board shows each number with a
+stack of bars, one for every copy still to place. Tap a number to arm it,
+then tap cells
+to place it with no picker; tap a cell holding it to clear it. Tap the
+armed number again, or beside the board, to disarm. An armed number
+disarms itself once every copy is placed.
+
+Best times: every solve is stored in records.json under its size and the
+level the puzzle actually reached (the subtitle's level), so each board
+has its own leaderboard. Settings > Best times lists the ten fastest with
+dates. A preview never reads or writes records.
+
 UI stability (see JACK_BOOT): every change happens synchronously inside the
 tap that caused it, views are created once and only shown, hidden or
 re-labelled, and settings are saved immediately.
@@ -28,6 +40,8 @@ import ui
 from style import theme
 from tilegame.cell_picker import CellPicker
 from tilegame.fill_grid import FillGrid
+from tilegame.number_tray import NumberTray
+from tilegame.records import TOP_LENGTH, RecordBook, record_key
 from tilegame import saved_game
 from tilegame.widgets import ChoiceRow, make_button, make_label
 
@@ -57,6 +71,7 @@ LEVEL_LABELS = {1: "Easy", 2: "Medium", 3: "Hard"}      # rules levels
 GAME_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(GAME_DIR, "settings.json")
 SAVE_PATH = os.path.join(GAME_DIR, "saved_game.json")   # the puzzle in progress
+RECORDS_PATH = os.path.join(GAME_DIR, "records.json")   # best times per board
 
 DEFAULT_SETTINGS = {
     "size": 9,
@@ -134,6 +149,11 @@ def format_time(seconds):
     return "%d:%02d" % (minutes, seconds)
 
 
+def best_times_key(size, level):
+    """Records key for a board size and the level a puzzle reached (1 to 3)."""
+    return record_key("sudoku", "%dx%d" % (size, size), rules.DIFFICULTIES[level - 1])
+
+
 class SettingsPanel(ui.View):
     """Overlay editing a draft of the settings, covering the game area.
 
@@ -198,6 +218,7 @@ class SettingsPanel(ui.View):
             background=theme.color("tile"), title_color=BACKGROUND,
         )
         self.done_button = make_button("Done", self.done_tapped)
+        self.best_times_button = make_button("Best times", self.best_times_tapped)
 
         for view in (
             self.title_label,
@@ -215,6 +236,7 @@ class SettingsPanel(ui.View):
             self.complete_label,
             self.complete_switch,
             self.new_puzzle_button,
+            self.best_times_button,
             self.done_button,
         ):
             self.add_subview(view)
@@ -251,7 +273,9 @@ class SettingsPanel(ui.View):
         y += 68
         self.new_puzzle_button.frame = (left, y, column, 52)
         y += 68
-        self.done_button.frame = (left, y, column, 52)
+        half = (column - 12) / 2
+        self.best_times_button.frame = (left, y, half, 52)
+        self.done_button.frame = (left + half + 12, y, half, 52)
 
     def open(self):
         self.draft = dict(self.screen.settings)
@@ -310,18 +334,131 @@ class SettingsPanel(ui.View):
         if self.screen.apply_settings(self.draft):
             self.hidden = True
 
+    def best_times_tapped(self, sender):
+        """Show the best times over Settings; its Back returns here."""
+        self.screen.open_best_times()
+
+
+class BestTimesPanel(ui.View):
+    """Overlay listing the fastest solves for one board size and level.
+
+    Each size and level is its own leaderboard. It opens on the current
+    puzzle's board; Back returns to Settings underneath. Every label is
+    made once and only re-labelled when the choice changes.
+    """
+
+    TOP = 16
+    ROW_HEIGHT = 30
+
+    def __init__(self, screen):
+        super().__init__()
+        self.screen = screen
+        self.background_color = BACKGROUND
+        self.hidden = True
+        self.size = rules.BOARD_SIZES[-1]
+        self.level = 1
+
+        self.title_label = make_label("Best times", ("AvenirNext-Bold", 24), TEXT)
+        self.size_control = ChoiceRow(SIZE_LABELS, self.size_changed)
+        self.level_control = ChoiceRow(DIFFICULTY_LABELS, self.level_changed)
+        self.empty_label = make_label(
+            "No solves on this board yet", ("AvenirNext-Medium", 15), MUTED)
+
+        self.time_labels = []
+        self.date_labels = []
+        for _ in range(TOP_LENGTH):
+            self.time_labels.append(make_label(
+                "", ("AvenirNext-DemiBold", 17), TEXT, alignment=ui.ALIGN_LEFT))
+            self.date_labels.append(make_label(
+                "", ("AvenirNext-Medium", 15), MUTED, alignment=ui.ALIGN_RIGHT))
+
+        self.back_button = make_button("Back to settings", self.back_tapped)
+
+        for view in (
+            [self.title_label, self.size_control, self.level_control, self.empty_label]
+            + self.time_labels + self.date_labels + [self.back_button]
+        ):
+            self.add_subview(view)
+
+    def layout(self):
+        column = min(320, self.width - 48)
+        left = (self.width - column) / 2
+
+        y = self.TOP
+        self.title_label.frame = (left, y, column, 36)
+        y += 52
+        self.size_control.frame = (left, y, column, 40)
+        y += 52
+        self.level_control.frame = (left, y, column, 40)
+        y += 56
+        self.empty_label.frame = (left, y, column, 24)
+        for index, (time_label, date_label) in enumerate(
+                zip(self.time_labels, self.date_labels)):
+            row_y = y + index * self.ROW_HEIGHT
+            time_label.frame = (left, row_y, column / 2, self.ROW_HEIGHT)
+            date_label.frame = (left + column / 2, row_y, column / 2, self.ROW_HEIGHT)
+        y += TOP_LENGTH * self.ROW_HEIGHT + 20
+        self.back_button.frame = (left, y, column, 52)
+
+    def open(self, size, level):
+        self.size = size
+        self.level = level
+        self.size_control.selected_index = rules.BOARD_SIZES.index(size)
+        self.show_board()
+        self.hidden = False
+        self.bring_to_front()
+
+    def show_board(self):
+        """Fade levels this size never reaches, then list its fastest solves."""
+        offered = rules.DIFFICULTIES_BY_SIZE[self.size]
+        reachable = [difficulty in offered for difficulty in rules.DIFFICULTIES]
+        self.level_control.set_enabled(reachable)
+        if not reachable[self.level - 1]:
+            self.level = rules.DIFFICULTIES.index(offered[-1]) + 1
+        self.level_control.selected_index = self.level - 1
+
+        records = self.screen.records
+        runs = records.top(best_times_key(self.size, self.level)) if records else []
+        self.empty_label.hidden = bool(runs)
+        for index, (time_label, date_label) in enumerate(
+                zip(self.time_labels, self.date_labels)):
+            if index < len(runs):
+                run = runs[index]
+                time_label.text = "%d.   %s" % (index + 1, format_time(run["seconds"]))
+                date_label.text = time.strftime("%d %b %Y", time.localtime(run["when"]))
+            else:
+                time_label.text = ""
+                date_label.text = ""
+
+    def size_changed(self, sender):
+        self.size = rules.BOARD_SIZES[sender.selected_index]
+        self.show_board()
+
+    def level_changed(self, sender):
+        self.level = sender.selected_index + 1
+        self.show_board()
+
+    def back_tapped(self, sender):
+        self.hidden = True
+
 
 class SudokuScreen(ui.View):
     """Sudoku under the shell header: one puzzle at a time."""
 
     SIDE_MARGIN = 16
     BOTTOM_BAR = 80
+    TRAY_GAP = 10       # space above and below the number tray
 
     def __init__(self, preview=False, **kwargs):
         super().__init__(**kwargs)
         self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
-        self.settings = dict(PREVIEW_SETTINGS) if preview else load_settings()
+        if preview:
+            self.settings = dict(PREVIEW_SETTINGS)
+            self.records = None     # a preview never reads or writes best times
+        else:
+            self.settings = load_settings()
+            self.records = RecordBook(RECORDS_PATH)
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
@@ -331,8 +468,10 @@ class SudokuScreen(ui.View):
         self.grid = None             # FillGrid holding values and notes
         self.selected_cell = None    # the cell the picker is open for
         self.focus_cell = None       # the cell highlighted with its row, column, box and number
+        self.armed_value = None      # the tray number that cell taps place, or None
         self.started = None          # when this puzzle was dealt
         self.solve_seconds = None    # set once, in the tap that solves it
+        self.run_result = None       # RunResult once a solve is recorded
 
         self.status_label = make_label("", ("AvenirNext-Medium", 15), MUTED)
 
@@ -340,19 +479,24 @@ class SudokuScreen(ui.View):
         self.board_view.background_color = BACKGROUND
         self.board_view.on_cell_tapped = self.cell_tapped
 
+        self.tray = NumberTray(self.tray_tapped)
+
         self.undo_button = make_button("Undo", self.undo_tapped)
         self.new_button = make_button("New puzzle", self.new_tapped)
 
         self.picker = CellPicker(self.value_picked, notes_enabled=True)
         self.settings_panel = SettingsPanel(self)
+        self.best_times_panel = BestTimesPanel(self)
 
         for view in (
             self.status_label,
             self.board_view,
+            self.tray,
             self.undo_button,
             self.new_button,
-            self.picker,
-            self.settings_panel,   # last, so it covers everything
+            self.picker,             # opens over the tray
+            self.settings_panel,     # covers the game
+            self.best_times_panel,   # last, so it covers Settings
         ):
             self.add_subview(view)
 
@@ -385,9 +529,19 @@ class SudokuScreen(ui.View):
 
         self.status_label.frame = (margin, TOP_GAP, width - 2 * margin, STATUS_HEIGHT)
 
+        # The board gets what is left after the status line, the number tray
+        # and the buttons; the tray then sits just under the grid, as wide.
         board_top = TOP_GAP + STATUS_HEIGHT + 4
         buttons_y = height - self.BOTTOM_BAR + 16
-        self.board_view.frame = (0, board_top, width, max(0, buttons_y - 12 - board_top))
+        tray_space = self.tray.HEIGHT + 2 * self.TRAY_GAP
+        self.board_view.frame = (
+            0, board_top, width, max(0, buttons_y - 12 - tray_space - board_top))
+
+        grid_left, grid_top, grid_side = self.board_view.board_rect()
+        self.tray.frame = (
+            grid_left, board_top + grid_top + grid_side + self.TRAY_GAP,
+            grid_side, self.tray.HEIGHT)
+        self.tray.set_needs_display()
 
         button_width = min(160, (width - 3 * margin) / 2)
         row_left = (width - (2 * button_width + 12)) / 2
@@ -395,6 +549,7 @@ class SudokuScreen(ui.View):
         self.new_button.frame = (row_left + button_width + 12, buttons_y, button_width, 48)
 
         self.settings_panel.frame = self.bounds
+        self.best_times_panel.frame = self.bounds
 
     # --- game flow -----------------------------------------------------------
 
@@ -423,6 +578,8 @@ class SudokuScreen(ui.View):
         self.grid = grid
         self.selected_cell = None
         self.focus_cell = None
+        self.armed_value = None
+        self.run_result = None
         self.started = time.time() - seconds_played
         self.solve_seconds = None
 
@@ -518,7 +675,11 @@ class SudokuScreen(ui.View):
         return True
 
     def refresh(self):
-        """Redraw marks and status from the grid. Called after every change."""
+        """Redraw marks, tray and status from the grid. Called after every change.
+
+        An armed number whose copies are all placed (or a solved puzzle)
+        disarms here, so placing, undo and new deals all get it right.
+        """
         values = self.grid.rows()
         notes = {
             cell: self.grid.notes_at(cell)
@@ -530,6 +691,11 @@ class SudokuScreen(ui.View):
         else:
             conflicts = set()
 
+        remaining_by_value = self.remaining_by_value(values)
+        if self.armed_value is not None and (
+                self.solved or remaining_by_value.get(self.armed_value, 0) == 0):
+            self.armed_value = None
+
         if self.settings["highlight"] and not self.solved:
             focus = self.focus_cell
         else:
@@ -540,11 +706,15 @@ class SudokuScreen(ui.View):
             completed = ()
         self.board_view.refresh_marks(
             values, notes, self.selected_cell, conflicts, self.solved,
-            focus_cell=focus, completed=completed,
+            focus_cell=focus, completed=completed, armed_value=self.armed_value,
+        )
+        self.tray.show(
+            self.grid.allowed_values, remaining_by_value,
+            capacity=self.puzzle.size, armed=self.armed_value,
         )
 
         if self.solved:
-            self.status_label.text = "Solved in %s" % format_time(self.solve_seconds)
+            self.status_label.text = self.solved_text()
             self.status_label.text_color = SUCCESS
         else:
             remaining = len(self.grid.empty_cells())
@@ -554,6 +724,55 @@ class SudokuScreen(ui.View):
 
         self.undo_button.enabled = self.grid.can_undo() and not self.solved
 
+    def remaining_by_value(self, values):
+        """How many more copies of each number the board needs.
+
+        Wrong numbers count as placed, so the tray never hints at mistakes.
+        """
+        placed = {value: 0 for value in self.grid.allowed_values}
+        for row in values:
+            for value in row:
+                if value in placed:
+                    placed[value] += 1
+        return {
+            value: max(0, self.puzzle.size - count)
+            for value, count in placed.items()
+        }
+
+    def solved_text(self):
+        """The status line once solved, with how the time compares."""
+        text = "Solved in %s" % format_time(self.solve_seconds)
+        result = self.run_result
+        if result is None:
+            return text
+        if result.previous_best is None:
+            return text + " · first best time"
+        if result.is_best:
+            return text + " · new best!"
+        return text + " · best %s" % format_time(result.previous_best)
+
+    def puzzle_level(self):
+        """The level the current puzzle reached, 1 (Easy) to 3 (Hard)."""
+        level = self.puzzle.level
+        return level if level in (1, 2, 3) else 1
+
+    def open_best_times(self):
+        """Called from Settings: the best times for the current puzzle's board."""
+        self.best_times_panel.open(self.puzzle.size, self.puzzle_level())
+
+    def record_solve(self):
+        """Add the solve time to its board's best times, saved now.
+
+        A preview records nothing; a failed save is reported, never fatal.
+        """
+        if self.records is None:
+            return
+        key = best_times_key(self.puzzle.size, self.puzzle_level())
+        try:
+            self.run_result = self.records.add(key, self.solve_seconds)
+        except OSError as error:
+            print("Sudoku: best time not saved: {}".format(error))
+
     def cell_tapped(self, cell):
         """Highlight the tapped cell and open the picker under the board.
 
@@ -561,11 +780,18 @@ class SudokuScreen(ui.View):
         clears the highlight. The cell the picker is open for, tapped again,
         closes the picker and clears the highlight, as does a tap beside the
         grid. After a number is placed the highlight stays on its cell.
+
+        With a tray number armed, a tap places it instead (no picker).
         """
         if self.solved or cell is None:
             self.focus_cell = None
+            self.armed_value = None
             self.close_picker()
             self.refresh()
+            return
+
+        if self.armed_value is not None:
+            self.cell_tapped_while_armed(cell)
             return
 
         if self.grid.is_given(cell):
@@ -584,8 +810,9 @@ class SudokuScreen(ui.View):
         self.focus_cell = cell
 
         # The picker opens under the whole grid rather than beside the cell,
-        # so every number on the board stays visible while choosing. On a
-        # short screen it may rest over Undo and New puzzle.
+        # so every number on the board stays visible while choosing. It
+        # covers the number tray while open. On a short screen it may rest
+        # over Undo and New puzzle.
         board_x, board_y = self.board_view.frame[0], self.board_view.frame[1]
         grid_left, grid_top, grid_side = self.board_view.board_rect()
         grid_frame = (board_x + grid_left, board_y + grid_top, grid_side, grid_side)
@@ -595,6 +822,34 @@ class SudokuScreen(ui.View):
             current=self.grid.value_at(cell), notes=self.grid.notes_at(cell),
             completed=self.grid.completed_values(),
         )
+        self.refresh()
+
+    def cell_tapped_while_armed(self, cell):
+        """Place the armed number in cell, or clear it if it is already there.
+
+        Givens are left alone. A different player number is replaced.
+        """
+        if self.grid.is_given(cell):
+            return
+        if self.grid.value_at(cell) == self.armed_value:
+            self.grid.clear(cell)
+            self.refresh()
+            self.save_game()
+            return
+        self.place_value(cell, self.armed_value)
+
+    def tray_tapped(self, value):
+        """Arm a tray number, or disarm it if it is already armed.
+
+        Arming closes the picker and drops the cell highlight, so the board
+        highlights every copy of the armed number instead.
+        """
+        if self.solved:
+            return
+        self.picker.hide_picker()
+        self.selected_cell = None
+        self.focus_cell = None
+        self.armed_value = None if value == self.armed_value else value
         self.refresh()
 
     def close_picker(self):
@@ -631,13 +886,21 @@ class SudokuScreen(ui.View):
             self.save_game()
             return
 
+        self.picker.hide_picker()
+        self.selected_cell = None
+        self.place_value(cell, value)
+
+    def place_value(self, cell, value):
+        """Write value into cell, check for a solve, redraw and save, all now.
+
+        The picker and the number tray both place numbers through here.
+        """
         changed = self.grid.set_value(
             cell, value, clean_peer_notes=self.settings["tidy_notes"]
         )
-        self.picker.hide_picker()
-        self.selected_cell = None
         if changed and rules.is_solved(self.puzzle, self.grid.rows()):
             self.solve_seconds = time.time() - self.started
+            self.record_solve()
         self.refresh()
         self.save_game()
 
@@ -654,8 +917,9 @@ class SudokuScreen(ui.View):
 
     def touch_ended(self, touch):
         """A tap on the background, off the board and buttons, clears the
-        highlight and closes the picker."""
+        highlight, disarms the tray and closes the picker."""
         self.focus_cell = None
+        self.armed_value = None
         self.close_picker()
         self.refresh()
 

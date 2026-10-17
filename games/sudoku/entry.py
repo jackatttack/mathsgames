@@ -17,14 +17,14 @@ from games.sudoku.screen import SudokuScreen
 # (role token in style/theme.py, name, what it colours).
 THEME_ROLES = (
     ("background", "Background", "Behind the board and buttons"),
-    ("board", "Board", "The cells"),
-    ("grid_line", "Grid lines", "Thin lines between cells"),
+    ("board", "Board", "The cells and the number tray"),
+    ("grid_line", "Grid lines", "Thin lines between cells, and the tray's stacks"),
     ("box_wall", "Box walls", "Thick lines round each box"),
     ("given", "Given numbers", "Numbers the puzzle starts with"),
-    ("player_number", "Your numbers", "Numbers you write in"),
+    ("player_number", "Your numbers", "Numbers you write in, and the tray's"),
     ("note", "Notes", "Pencil marks"),
-    ("selection_fill", "Selected cell", "The cell you tapped"),
-    ("selection", "Selection outline", "The ring round the cell you tapped"),
+    ("selection_fill", "Selected cell", "The cell you tapped, and the armed tray number"),
+    ("selection", "Selection outline", "The ring round the selected cell and armed number"),
     ("assist_peer", "Row, column and box", "Highlight round the selected cell"),
     ("assist_match", "Matching numbers", "Cells holding the selected number"),
 )

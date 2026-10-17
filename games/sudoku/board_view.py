@@ -42,6 +42,7 @@ class SudokuBoardView(ui.View):
     SELECTED_OUTLINE_WIDTH = 3
     VALUE_FONT_RATIO = 0.6
     NOTE_FONT_RATIO = 0.26
+    armed_value = None   # the tray's armed number; refresh_marks sets it
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -74,10 +75,11 @@ class SudokuBoardView(ui.View):
         self.set_needs_display()
 
     def refresh_marks(self, values, notes, selected_cell, conflicts, solved,
-                      focus_cell=None, completed=()):
+                      focus_cell=None, completed=(), armed_value=None):
         """Show the player's marks. focus_cell, when given, is highlighted
         with its row, column, box and every copy of its number. Numbers in
-        completed are drawn green wherever they appear."""
+        completed are drawn green wherever they appear. armed_value, the
+        number armed in the tray, has every copy highlighted, focus or not."""
         self.completed = set(completed)
         self.values = values
         self.notes = dict(notes)
@@ -85,6 +87,7 @@ class SudokuBoardView(ui.View):
         self.conflicts = set(conflicts)
         self.solved = solved
         self.focus_cell = focus_cell
+        self.armed_value = armed_value
         self.set_needs_display()
 
     # --- geometry ------------------------------------------------------------
@@ -162,20 +165,28 @@ class SudokuBoardView(ui.View):
     def _draw_assist(self, left, top, cell_size):
         """Shade the focus cell's row, column and box, then its number's copies.
 
-        Drawn first, under the selection, grid lines and numbers.
+        A number armed in the tray is matched instead, with or without a
+        focus cell. Drawn first, under the selection, grid lines and numbers.
         """
-        if self.focus_cell is None:
+        if self.focus_cell is None and self.armed_value is None:
             return
-        focus_row, focus_col = self.focus_cell
-        focus_box = (focus_row // self.box_rows, focus_col // self.box_cols)
-        match = self.focus_value()
+        if self.armed_value is not None:
+            match = self.armed_value
+        else:
+            match = self.focus_value()
+
+        focus_box = None
+        if self.focus_cell is not None:
+            focus_row, focus_col = self.focus_cell
+            focus_box = (focus_row // self.box_rows, focus_col // self.box_cols)
 
         for row in range(self.size):
             for col in range(self.size):
-                in_box = (row // self.box_rows, col // self.box_cols) == focus_box
                 if match is not None and self.values[row][col] == match:
                     ui.set_color(MATCH_FILL)
-                elif row == focus_row or col == focus_col or in_box:
+                elif focus_box is not None and (
+                        row == focus_row or col == focus_col
+                        or (row // self.box_rows, col // self.box_cols) == focus_box):
                     ui.set_color(PEER_FILL)
                 else:
                     continue

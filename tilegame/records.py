@@ -9,7 +9,10 @@ record_key, for example:
     record_key("countdown", "boards-5", "normal", "mix", "skip-60")
     record_key("multiple_merge", "classic", "x25", "targets-7")
 
-Each key keeps its best time and its most recent runs. Saving is
+Each key keeps its best time, its most recent runs, and its fastest
+TOP_LENGTH runs with their dates (a leaderboard). A file saved before the
+fastest list existed gets one seeded from its history on the next add.
+Saving is
 synchronous and replaces the file in one step (write a temporary file,
 then os.replace), so a crash mid-save leaves the old file intact.
 A file that cannot be read is kept beside it as <name>.bad rather than
@@ -24,6 +27,7 @@ import time
 # --- editable settings ------------------------------------------------------
 
 HISTORY_LENGTH = 20      # recent runs kept per key, newest first
+TOP_LENGTH = 10          # fastest runs kept per key, fastest first
 
 
 # --- keys and display -------------------------------------------------------
@@ -72,6 +76,19 @@ class RecordBook:
         entry = self.entries.get(key)
         return list(entry["history"]) if entry else []
 
+    def top(self, key):
+        """Fastest runs for key, fastest first: [{"seconds", "when"}].
+
+        An entry saved before the fastest list existed answers from its
+        history until its next add stores a proper list.
+        """
+        entry = self.entries.get(key)
+        if not entry:
+            return []
+        if "top" in entry:
+            return list(entry["top"])
+        return self._fastest(entry["history"])
+
     # Writing.
 
     def add(self, key, seconds, when=None):
@@ -80,17 +97,27 @@ class RecordBook:
         when = when if when is not None else time.time()
 
         entry = self.entries.setdefault(key, {"best": None, "history": []})
+        if "top" not in entry:
+            entry["top"] = self._fastest(entry["history"])
         previous_best = entry["best"]
         is_best = previous_best is None or seconds < previous_best
 
         if is_best:
             entry["best"] = seconds
 
-        entry["history"].insert(0, {"seconds": seconds, "when": round(when)})
+        run = {"seconds": seconds, "when": round(when)}
+        entry["history"].insert(0, run)
         del entry["history"][HISTORY_LENGTH:]
+        entry["top"] = self._fastest(entry["top"] + [dict(run)])
 
         self._save()
         return RunResult(seconds, is_best, previous_best)
+
+    @staticmethod
+    def _fastest(runs):
+        """The TOP_LENGTH fastest runs, fastest first; ties go to the earlier run."""
+        ordered = sorted(runs, key=lambda run: (run["seconds"], run["when"]))
+        return [dict(run) for run in ordered[:TOP_LENGTH]]
 
     # Storage.
 
@@ -115,12 +142,14 @@ class RecordBook:
         return entries
 
     @staticmethod
+    @staticmethod
     def _valid_entry(entry):
         return (
             isinstance(entry, dict)
             and (entry.get("best") is None
                  or isinstance(entry.get("best"), (int, float)))
             and isinstance(entry.get("history"), list)
+            and isinstance(entry.get("top", []), list)
         )
 
     def _set_aside(self):
