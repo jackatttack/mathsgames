@@ -68,7 +68,7 @@ RELEASED = (
     ),
 )
 
-# Not good enough to ship yet. Listed after the released games in a dev copy.
+# Not ready to ship yet. Listed after the released games in a dev copy.
 IN_DEVELOPMENT = (
     GameInfo(
         game_id="number_detective",
@@ -77,6 +77,24 @@ IN_DEVELOPMENT = (
         icon="?",
         accent="sky",
         entry="games.number_detective.entry:create_view",
+        status="in development",
+    ),
+    GameInfo(
+        game_id="twenty48",
+        title="2048",
+        tagline="Swipe to merge tiles: doubling or Fibonacci",
+        icon="2048",
+        accent="warm",
+        entry="games.twenty48.entry:create_view",
+        status="in development",
+    ),
+    GameInfo(
+        game_id="times_tables",
+        title="Times Tables",
+        tagline="Tap the answer: practise, or beat the clock",
+        icon="7×",
+        accent="coral",
+        entry="games.times_tables.entry:create_view",
         status="in development",
     ),
 )

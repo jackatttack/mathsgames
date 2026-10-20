@@ -43,6 +43,7 @@ class SudokuBoardView(ui.View):
     VALUE_FONT_RATIO = 0.6
     NOTE_FONT_RATIO = 0.26
     armed_value = None   # the tray's armed number; refresh_marks sets it
+    values_hidden = False   # True while the solve celebration draws the numbers
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -219,6 +220,8 @@ class SudokuBoardView(ui.View):
         walls.stroke()
 
     def _draw_values(self, left, top, cell_size):
+        if self.values_hidden:      # the celebration overlay draws them instead
+            return
         given_font = ("AvenirNext-Bold", cell_size * self.VALUE_FONT_RATIO)
         player_font = ("AvenirNext-Medium", cell_size * self.VALUE_FONT_RATIO)
         for row, row_values in enumerate(self.values):

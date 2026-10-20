@@ -498,6 +498,34 @@ def accents_for_family(family):
     ]
 
 
+def celebration_colors(count):
+    """count fill colours for a finish celebration, led by the player's own picks.
+
+    The player's chosen selection and number colours come first, then the
+    curated accents in ACCENT_ORDER, then success. Repeats are dropped, and
+    so are near-white and near-black colours, which would wash out or vanish
+    as a fill. Colour n is meant for number n + 1, so number 1 always wears
+    the player's selection colour. Cycles when count is larger.
+    """
+    candidates = [color("selection"), color("player_number")]
+    candidates += [ACCENTS[accent_id][1] for accent_id in ACCENT_ORDER]
+    candidates.append(color("success"))
+
+    chosen = []
+    for candidate in candidates:
+        if str(candidate).upper() in [str(existing).upper() for existing in chosen]:
+            continue
+        try:
+            if not 0.08 <= luminance(candidate) <= 0.8:
+                continue
+        except Exception:
+            pass    # not a hex colour; keep it rather than guess
+        chosen.append(candidate)
+    if not chosen:
+        chosen = [ACCENTS[ACCENT_ORDER[0]][1]]
+    return [chosen[index % len(chosen)] for index in range(count)]
+
+
 # --- per-game roles ----------------------------------------------------------
 
 def swatch_ids(kind):

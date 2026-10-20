@@ -19,7 +19,13 @@ stack of bars, one for every copy still to place. Tap a number to arm it,
 then tap cells
 to place it with no picker; tap a cell holding it to clear it. Tap the
 armed number again, or beside the board, to disarm. An armed number
-disarms itself once every copy is placed.
+disarms itself once every copy is placed. While a number is armed, the
+Notes chip at the end of the tray switches cell taps to toggling that
+number's pencil mark in empty cells; disarming turns Notes off.
+
+Solving starts a two-second celebration in a random style over the board
+(tilegame/flourish_overlay.py, timed by feel/flourish.py), coloured from
+the player's theme. It stays until the next deal.
 
 Best times: every solve is stored in records.json under its size and the
 level the puzzle actually reached (the subtitle's level), so each board
@@ -41,6 +47,7 @@ from style import theme
 from tilegame.cell_picker import CellPicker
 from tilegame.fill_grid import FillGrid
 from tilegame.number_tray import NumberTray
+from tilegame.flourish_overlay import FlourishOverlay
 from tilegame.records import TOP_LENGTH, RecordBook, record_key
 from tilegame import saved_game
 from tilegame.widgets import ChoiceRow, make_button, make_label
@@ -469,6 +476,7 @@ class SudokuScreen(ui.View):
         self.selected_cell = None    # the cell the picker is open for
         self.focus_cell = None       # the cell highlighted with its row, column, box and number
         self.armed_value = None      # the tray number that cell taps place, or None
+        self.notes_armed = False     # with a number armed, cell taps toggle its note instead
         self.started = None          # when this puzzle was dealt
         self.solve_seconds = None    # set once, in the tap that solves it
         self.run_result = None       # RunResult once a solve is recorded
@@ -479,7 +487,10 @@ class SudokuScreen(ui.View):
         self.board_view.background_color = BACKGROUND
         self.board_view.on_cell_tapped = self.cell_tapped
 
-        self.tray = NumberTray(self.tray_tapped)
+        # The solve celebration: over the board, touches pass through.
+        self.flourish = FlourishOverlay()
+
+        self.tray = NumberTray(self.tray_tapped, on_notes=self.tray_notes_tapped)
 
         self.undo_button = make_button("Undo", self.undo_tapped)
         self.new_button = make_button("New puzzle", self.new_tapped)
@@ -491,6 +502,7 @@ class SudokuScreen(ui.View):
         for view in (
             self.status_label,
             self.board_view,
+            self.flourish,           # over the board, under the tray and picker
             self.tray,
             self.undo_button,
             self.new_button,
@@ -537,6 +549,8 @@ class SudokuScreen(ui.View):
         self.board_view.frame = (
             0, board_top, width, max(0, buttons_y - 12 - tray_space - board_top))
 
+        self.flourish.frame = self.board_view.frame
+
         grid_left, grid_top, grid_side = self.board_view.board_rect()
         self.tray.frame = (
             grid_left, board_top + grid_top + grid_side + self.TRAY_GAP,
@@ -579,10 +593,12 @@ class SudokuScreen(ui.View):
         self.selected_cell = None
         self.focus_cell = None
         self.armed_value = None
+        self.notes_armed = False
         self.run_result = None
         self.started = time.time() - seconds_played
         self.solve_seconds = None
 
+        self.stop_flourish()
         self.picker.hide_picker()
         self.picker.set_values(self.grid.allowed_values)
         self.board_view.load_puzzle(self.puzzle, rules.BOX_SHAPES[size])
@@ -695,6 +711,8 @@ class SudokuScreen(ui.View):
         if self.armed_value is not None and (
                 self.solved or remaining_by_value.get(self.armed_value, 0) == 0):
             self.armed_value = None
+        if self.armed_value is None:
+            self.notes_armed = False
 
         if self.settings["highlight"] and not self.solved:
             focus = self.focus_cell
@@ -711,6 +729,7 @@ class SudokuScreen(ui.View):
         self.tray.show(
             self.grid.allowed_values, remaining_by_value,
             capacity=self.puzzle.size, armed=self.armed_value,
+            notes_on=self.notes_armed,
         )
 
         if self.solved:
@@ -831,6 +850,13 @@ class SudokuScreen(ui.View):
         """
         if self.grid.is_given(cell):
             return
+        if self.notes_armed:
+            # Notes go only in empty cells; a cell holding a number is left alone.
+            if self.grid.value_at(cell) is None:
+                self.grid.toggle_note(cell, self.armed_value)
+                self.refresh()
+                self.save_game()
+            return
         if self.grid.value_at(cell) == self.armed_value:
             self.grid.clear(cell)
             self.refresh()
@@ -850,6 +876,14 @@ class SudokuScreen(ui.View):
         self.selected_cell = None
         self.focus_cell = None
         self.armed_value = None if value == self.armed_value else value
+        self.refresh()
+
+    def tray_notes_tapped(self):
+        """Toggle Notes for the armed number: cell taps then toggle its pencil
+        mark instead of placing it. The tray offers it only while armed."""
+        if self.solved or self.armed_value is None:
+            return
+        self.notes_armed = not self.notes_armed
         self.refresh()
 
     def close_picker(self):
@@ -898,11 +932,34 @@ class SudokuScreen(ui.View):
         changed = self.grid.set_value(
             cell, value, clean_peer_notes=self.settings["tidy_notes"]
         )
-        if changed and rules.is_solved(self.puzzle, self.grid.rows()):
+        just_solved = changed and rules.is_solved(self.puzzle, self.grid.rows())
+        if just_solved:
             self.solve_seconds = time.time() - self.started
             self.record_solve()
         self.refresh()
         self.save_game()
+        if just_solved:
+            self.start_flourish(cell)
+
+    def start_flourish(self, last_cell):
+        """Celebrate a solve in the tap that solved it: a random style, any
+        ripple starting from the last cell filled. A preview never celebrates."""
+        if self.preview:
+            return
+        self.board_view.values_hidden = True
+        self.board_view.set_needs_display()
+        self.flourish.play(
+            self.grid.rows(), set(self.puzzle.givens_by_cell()),
+            rules.BOX_SHAPES[self.puzzle.size], self.board_view.cell_frame,
+            origin=last_cell,
+        )
+
+    def stop_flourish(self):
+        """Clear the celebration and give the board its numbers back."""
+        self.flourish.clear()
+        if self.board_view.values_hidden:
+            self.board_view.values_hidden = False
+            self.board_view.set_needs_display()
 
     def undo_tapped(self, sender):
         self.picker.hide_picker()
