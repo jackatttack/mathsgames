@@ -248,7 +248,11 @@ class SudokuBoardView(ui.View):
         font = ("AvenirNext-Medium", max(8, cell_size * self.NOTE_FONT_RATIO))
         mini_width = cell_size / self.box_cols
         mini_height = cell_size / self.box_rows
-        match = self.focus_value()
+        # Same rule as _draw_assist: an armed tray number wins over the focus cell.
+        if self.armed_value is not None:
+            match = self.armed_value
+        else:
+            match = self.focus_value()
         for (row, col), noted in self.notes.items():
             for value in noted:
                 mini_row, mini_col = divmod(value - 1, self.box_cols)
