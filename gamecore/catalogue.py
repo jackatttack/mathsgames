@@ -66,6 +66,15 @@ RELEASED = (
         entry="games.pick_and_mix.entry:create_view",
         status="playable",
     ),
+    GameInfo(
+        game_id="gradient",
+        title="Gradient",
+        tagline="Swap tiles to restore the colour gradient",
+        icon="∇",
+        accent="violet",
+        entry="games.gradient.entry:create_view",
+        status="playable",
+    ),
 )
 
 # Not ready to ship yet. Listed after the released games in a dev copy.

@@ -1,0 +1,23 @@
+Swap tiles to put every colour back in its place. Solved, the board is one smooth gradient between its corner colours.
+
+## How to play
+- Drag a tile onto another to swap them, or tap one tile and then another.
+- Tiles with a dot are fixed. They never move, so use them as clues.
+- Each swap is one move. Par is the fewest swaps that can solve the board.
+- A new level shows solved for a moment, then shuffles. Tap to skip the shuffle.
+- Hint swaps one tile into its place. It counts as a move.
+- Your level is saved if you leave.
+
+## Reading the colours
+- Colours change evenly across the board, in lightness as well as hue. Look at how light a tile is as well as its colour.
+- Work out from the fixed tiles: a tile next to a dot should be only a small step from it.
+- Rows and columns are smooth blends. If one tile breaks the pattern, it belongs somewhere else.
+
+## Why par works
+- Follow each tile to the cell it belongs in, then follow the tile in that cell, and so on, until you get back to where you started. The misplaced tiles split into loops like this.
+- A loop of k tiles needs k − 1 swaps to fix, so par is the number of misplaced tiles minus the number of loops.
+
+## Settings
+- Easy, Medium and Hard change the board size, how many tiles are fixed and how close the colours are.
+- Daily: one medium level each day, the same for everyone. Replay it as often as you like; your best result counts.
+- Your best result against par and your fastest time are kept for each mode.
