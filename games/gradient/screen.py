@@ -25,6 +25,8 @@ import time
 import ui
 
 from style import theme
+from tilegame.records import RecordBook, record_key
+from tilegame.records_panel import RecordsPanel
 from tilegame.widgets import ChoiceRow, make_button, make_label
 
 from games.gradient import levels, rules
@@ -53,6 +55,10 @@ MODE_NOTES = {
     "daily": "One medium level a day, the same for everyone",
 }
 DAILY_DIFFICULTY = "medium"
+
+# Every mode keeps two leaderboards, both lowest first.
+MEASURES = ("time", "moves")          # seconds, and moves over par
+MEASURE_LABELS = ("Time", "Moves")
 PLAY_MESSAGE = "Swap tiles to restore the gradient"
 
 # --- saved files -----------------------------------------------------------------
@@ -111,15 +117,21 @@ def load_settings():
     return settings
 
 
-def load_records():
-    data = read_json(RECORDS_PATH)
-    data = data if isinstance(data, dict) else {}
-    modes = data.get("modes")
-    daily = data.get("daily")
-    return {
-        "modes": modes if isinstance(modes, dict) else {},
-        "daily": daily if isinstance(daily, dict) else {},
-    }
+def records_key(mode, measure):
+    """A leaderboard: every solve in a mode competes on time and on moves over par."""
+    return record_key("gradient", mode, measure)
+
+
+def daily_key(day=None):
+    """One day's Daily result: the fewest moves on that day's level."""
+    return record_key("gradient", "daily-moves", (day or datetime.date.today()).isoformat())
+
+
+def format_measure(measure, value):
+    """A stored value as text: '1:05' for time, 'par +2' for moves over par."""
+    if measure == "time":
+        return format_time(value)
+    return over_par_text(int(round(value)))
 
 
 def daily_seed(day=None):
@@ -146,9 +158,12 @@ def format_time(seconds):
     return "%d:%02d" % (seconds // 60, seconds % 60)
 
 
-def against_par(moves, par):
-    over = moves - par
+def over_par_text(over):
     return "on par" if over <= 0 else "par +%d" % over
+
+
+def against_par(moves, par):
+    return over_par_text(moves - par)
 
 
 class SettingsPanel(ui.View):
@@ -176,9 +191,11 @@ class SettingsPanel(ui.View):
             background=theme.color("tile"), title_color=BACKGROUND,
         )
         self.done_button = make_button("Done", self.done_tapped)
+        self.records_button = make_button("Best results", self.records_tapped)
 
         for view in (self.title_label, self.mode_caption, self.mode_control,
-                     self.mode_note, self.new_level_button, self.done_button):
+                     self.mode_note, self.new_level_button, self.records_button,
+                     self.done_button):
             self.add_subview(view)
 
     def layout(self):
@@ -195,7 +212,9 @@ class SettingsPanel(ui.View):
         y += 44
         self.new_level_button.frame = (left, y, column, 52)
         y += 68
-        self.done_button.frame = (left, y, column, 52)
+        half = (column - 12) / 2
+        self.records_button.frame = (left, y, half, 52)
+        self.done_button.frame = (left + half + 12, y, half, 52)
 
     def open(self):
         self.draft = dict(self.screen.settings)
@@ -216,6 +235,10 @@ class SettingsPanel(ui.View):
         self.screen.apply_settings(self.draft)
         self.hidden = True
 
+    def records_tapped(self, sender):
+        """Show the best results over Settings; its Back returns here."""
+        self.screen.open_records()
+
 
 class GradientScreen(ui.View):
     """Gradient under the shell header: one level at a time."""
@@ -228,7 +251,8 @@ class GradientScreen(ui.View):
         self.preview = preview      # theme editor sample: no disk, no touches
         self.background_color = BACKGROUND
         self.settings = dict(DEFAULT_SETTINGS) if preview else load_settings()
-        self.records = {"modes": {}, "daily": {}} if preview else load_records()
+        # A preview never reads or writes records.
+        self.records = None if preview else RecordBook(RECORDS_PATH)
 
         # Header contract (gamecore/game.py). The shell replaces the callback.
         self.header_subtitle = ""
@@ -239,6 +263,7 @@ class GradientScreen(ui.View):
         self.seconds_before = 0.0             # time played before this sitting
         self.sitting_started = time.time()
         self.solve_seconds = None
+        self.solve_results = {}               # measure -> RunResult for the last solve
         self.hints_used = 0
 
         self.status_label = make_label("", ("AvenirNext-DemiBold", 17), TEXT)
@@ -251,10 +276,16 @@ class GradientScreen(ui.View):
         self.hint_button = make_button("Hint", self.hint_tapped)
         self.new_button = make_button("New level", self.new_tapped)
         self.settings_panel = SettingsPanel(self)
+        self.records_panel = RecordsPanel(
+            "Best results", (MODE_LABELS, MEASURE_LABELS),
+            key_for=self.records_key_for, format_for=self.records_format_for,
+            book=self.records,
+        )
 
         for view in (self.status_label, self.message_label, self.board_view,
                      self.hint_button, self.new_button,
-                     self.settings_panel):     # last, so it covers everything
+                     self.settings_panel,      # covers the game
+                     self.records_panel):      # last, so it covers Settings
             self.add_subview(view)
 
         if preview:
@@ -294,6 +325,7 @@ class GradientScreen(ui.View):
         self.hint_button.frame = (left, buttons_y, button_width, 48)
         self.new_button.frame = (left + button_width + 12, buttons_y, button_width, 48)
         self.settings_panel.frame = self.bounds
+        self.records_panel.frame = self.bounds
 
     # --- level flow -------------------------------------------------------------
 
@@ -305,6 +337,7 @@ class GradientScreen(ui.View):
         self.seconds_before = 0.0
         self.sitting_started = time.time()
         self.solve_seconds = None
+        self.solve_results = {}
         self.hints_used = 0
         self.board_view.show(self.model, intro=True)
         self.refresh()
@@ -361,9 +394,7 @@ class GradientScreen(ui.View):
 
         if model.is_solved():
             self.status_label.text = "Solved in %d · Par %d" % (model.moves, model.par)
-            seconds = self.solve_seconds or 0
-            self.message_label.text = "%s · %s%s" % (
-                format_time(seconds), against_par(model.moves, model.par), hints)
+            self.message_label.text = self.solve_line() + hints
             self.message_label.text_color = SUCCESS
             return
 
@@ -371,43 +402,75 @@ class GradientScreen(ui.View):
         self.message_label.text = self.best_line() or PLAY_MESSAGE
         self.message_label.text_color = MUTED
 
+    def solve_line(self):
+        """Each result against its board: '1:23 new best · par +2 (best on par)'.
+
+        A first solve on a board gets no comparison.
+        """
+        values = {
+            "time": self.solve_seconds or 0,
+            "moves": self.model.moves - self.model.par,
+        }
+        parts = []
+        for measure in MEASURES:
+            text = format_measure(measure, values[measure])
+            result = self.solve_results.get(measure)
+            if result is not None and result.previous_best is not None:
+                if result.is_best:
+                    text += " new best"
+                else:
+                    text += " (best %s)" % format_measure(measure, result.previous_best)
+            parts.append(text)
+        return " · ".join(parts)
+
     def best_line(self):
-        """'Best: par +2 · 1:05' for this mode, or today's Daily result."""
-        if self.preview:
+        """'Best: 1:05 · on par' for this mode, or today's Daily result."""
+        if self.records is None:
             return None
         if self.mode == "daily":
-            today = self.records["daily"].get(datetime.date.today().isoformat())
-            if today:
-                return "Done today: %s · %s" % (
-                    against_par(today["moves"], today["par"]), format_time(today["seconds"]))
+            today = self.records.best(daily_key())
+            if today is not None:
+                return "Done today: %s" % against_par(int(round(today)), self.model.par)
+        best_time = self.records.best(records_key(self.mode, "time"))
+        best_moves = self.records.best(records_key(self.mode, "moves"))
+        if best_time is None or best_moves is None:
             return None
-        best = self.records["modes"].get(self.mode)
-        if not best or "best_over_par" not in best:
-            return None
-        over = best["best_over_par"]
-        par_text = "on par" if over <= 0 else "par +%d" % over
-        return "Best: %s · %s" % (par_text, format_time(best.get("fastest", 0)))
+        return "Best: %s · %s" % (format_time(best_time), format_measure("moves", best_moves))
 
     # --- saving ----------------------------------------------------------------------
 
     def record_solve(self):
-        if self.preview:
+        """Add this solve to its mode's time and moves boards (and today's Daily), saved now.
+
+        A preview records nothing; a failed save is printed, never fatal.
+        """
+        self.solve_results = {}
+        if self.records is None:
             return
-        moves, par, seconds = self.model.moves, self.model.par, self.solve_seconds
-        entry = self.records["modes"].setdefault(self.mode, {})
-        entry["solved"] = int(entry.get("solved", 0)) + 1
-        over = moves - par
-        if "best_over_par" not in entry or over < entry["best_over_par"]:
-            entry["best_over_par"] = over
-        if "fastest" not in entry or seconds < entry["fastest"]:
-            entry["fastest"] = round(seconds, 1)
-        if self.mode == "daily":
-            key = datetime.date.today().isoformat()
-            previous = self.records["daily"].get(key)
-            if previous is None or moves < previous.get("moves", moves + 1):
-                self.records["daily"][key] = {
-                    "moves": moves, "par": par, "seconds": round(seconds, 1)}
-        write_json(RECORDS_PATH, self.records)
+        values = {
+            "time": self.solve_seconds,
+            "moves": self.model.moves - self.model.par,
+        }
+        try:
+            for measure in MEASURES:
+                key = records_key(self.mode, measure)
+                self.solve_results[measure] = self.records.add(key, values[measure])
+            if self.mode == "daily":
+                self.records.add(daily_key(), self.model.moves)
+        except OSError as error:
+            print("Gradient: result not saved: {}".format(error))
+
+    def open_records(self):
+        """Called from Settings: the leaderboards, opened on the current mode's times."""
+        self.records_panel.open((MODES.index(self.mode), 0))
+
+    def records_key_for(self, selection):
+        mode_index, measure_index = selection
+        return records_key(MODES[mode_index], MEASURES[measure_index])
+
+    def records_format_for(self, selection):
+        measure = MEASURES[selection[1]]
+        return lambda value: format_measure(measure, value)
 
     def save_game(self):
         """Save the level in progress now. A solved level discards the save."""
@@ -447,6 +510,7 @@ class GradientScreen(ui.View):
         self.seconds_before = seconds
         self.sitting_started = time.time()
         self.solve_seconds = None
+        self.solve_results = {}
         self.hints_used = hints
         self.board_view.show(model)
         self.refresh()

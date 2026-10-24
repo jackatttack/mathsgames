@@ -20,4 +20,4 @@ Swap tiles to put every colour back in its place. Solved, the board is one smoot
 ## Settings
 - Easy, Medium and Hard change the board size, how many tiles are fixed and how close the colours are.
 - Daily: one medium level each day, the same for everyone. Replay it as often as you like; your best result counts.
-- Your best result against par and your fastest time are kept for each mode.
+- Best results in Settings lists your ten fastest times and ten best results against par for each mode.
