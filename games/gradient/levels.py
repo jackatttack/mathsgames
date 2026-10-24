@@ -6,7 +6,7 @@ A level is three independent choices:
     1. The colour field: the colour each cell shows when solved. Four
        corner colours are blended across the grid in OKLab (colour.py).
     2. The anchors: cells that never move. They are the player's clues.
-    3. The shuffle: which free cells get scrambled.
+    3. The shuffle: every free cell is scrambled; none starts in its place.
 
 generate_level(seed, difficulty) makes its random choices from one
 random.Random seeded by the difficulty and seed, and keeps the first attempt
@@ -29,11 +29,10 @@ from games.gradient import colour
 # Editable settings
 # ===========================================================================
 
-# Each difficulty picks a grid size, an anchor pattern and a shuffle region
-# at random from its lists. Sizes are (columns, rows); phones are tall.
-# Pattern names are the keys of ANCHOR_PATTERNS further down. Regions:
-# "all" shuffles every free cell, "half" one half of the board, "quadrant"
-# one quarter of it.
+# Each difficulty picks a grid size and an anchor pattern at random from its
+# lists. Sizes are (columns, rows); phones are tall. Pattern names are the
+# keys of ANCHOR_PATTERNS further down. Anchors are fixed; every other tile
+# is shuffled, so a tile in its place is always a dotted one.
 #
 # "effort" is the band a dealt level must land in. A level's effort is the
 # number of tiles in play, scaled up when colours are closer together:
@@ -44,19 +43,16 @@ DIFFICULTIES = {
     "easy": {
         "sizes": ((5, 7), (6, 8)),
         "patterns": ("checker", "border_cross", "rows"),
-        "regions": ("all",),
         "effort": (8, 25),
     },
     "medium": {
         "sizes": ((7, 9), (8, 10)),
         "patterns": ("border", "border_cross", "grid", "columns"),
-        "regions": ("all", "half"),
         "effort": (25, 60),
     },
     "hard": {
         "sizes": ((9, 12), (11, 13)),
         "patterns": ("corners", "border", "border_cross", "sprinkle"),
-        "regions": ("all", "quadrant"),
         "effort": (60, 400),
     },
 }
@@ -145,8 +141,7 @@ def _attempt(rng, settings):
     field = colour_field(cols, rows, pick_corner_colours(rng), vivid)
     pattern = rng.choice(settings["patterns"])
     anchors = pick_anchors(pattern, cols, rows, rng)
-    region = rng.choice(settings["regions"])
-    moving = sorted(region_cells(region, cols, rows, rng) - anchors)
+    moving = [cell for cell in range(cols * rows) if cell not in anchors]
     if len(moving) < 2:
         return None
 
@@ -154,7 +149,6 @@ def _attempt(rng, settings):
         "size": "%dx%d" % (cols, rows),
         "field": "vivid" if vivid else "blend",
         "pattern": pattern,
-        "region": region,
     }
     report.update(measure_colours(field, cols, rows))
     report["min_separation"] = min_separation(field, moving)
@@ -316,26 +310,6 @@ def pick_anchors(pattern, cols, rows, rng):
 # ===========================================================================
 # 3. The shuffle
 # ===========================================================================
-
-def region_cells(region, cols, rows, rng):
-    """The cells a shuffle may move, before anchors are taken out."""
-    every_column, every_row = range(cols), range(rows)
-    left, right = range((cols + 1) // 2), range(cols // 2, cols)
-    top, bottom = range((rows + 1) // 2), range(rows // 2, rows)
-
-    if region == "all":
-        columns, row_range = every_column, every_row
-    elif region == "half":
-        columns, row_range = rng.choice((
-            (left, every_row), (right, every_row),
-            (every_column, top), (every_column, bottom),
-        ))
-    elif region == "quadrant":
-        columns, row_range = rng.choice((left, right)), rng.choice((top, bottom))
-    else:
-        raise ValueError("unknown shuffle region: %r" % region)
-    return {row * cols + col for row in row_range for col in columns}
-
 
 def shuffle_cells(cell_count, moving, rng):
     """A dealt arrangement (cell -> tile) that moves every cell in moving.

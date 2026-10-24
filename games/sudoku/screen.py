@@ -48,7 +48,8 @@ from tilegame.cell_picker import CellPicker
 from tilegame.fill_grid import FillGrid
 from tilegame.number_tray import NumberTray
 from tilegame.flourish_overlay import FlourishOverlay
-from tilegame.records import TOP_LENGTH, RecordBook, record_key
+from tilegame.records import RecordBook, record_key
+from tilegame.records_panel import RecordsPanel
 from tilegame import saved_game
 from tilegame.widgets import ChoiceRow, make_button, make_label
 
@@ -346,107 +347,28 @@ class SettingsPanel(ui.View):
         self.screen.open_best_times()
 
 
-class BestTimesPanel(ui.View):
-    """Overlay listing the fastest solves for one board size and level.
+# --- best times, shown with the shared tilegame RecordsPanel ------------------
+# Each board size and level is its own leaderboard: the same RecordBook keys
+# (best_times_key) Sudoku has always used, so every earlier solve still shows.
 
-    Each size and level is its own leaderboard. It opens on the current
-    puzzle's board; Back returns to Settings underneath. Every label is
-    made once and only re-labelled when the choice changes.
-    """
+def records_selection(size, level):
+    """The panel selection for a board size and level (1 to 3)."""
+    return (rules.BOARD_SIZES.index(size), level - 1)
 
-    TOP = 16
-    ROW_HEIGHT = 30
 
-    def __init__(self, screen):
-        super().__init__()
-        self.screen = screen
-        self.background_color = BACKGROUND
-        self.hidden = True
-        self.size = rules.BOARD_SIZES[-1]
-        self.level = 1
+def records_key_for(selection):
+    size_index, level_index = selection
+    return best_times_key(rules.BOARD_SIZES[size_index], level_index + 1)
 
-        self.title_label = make_label("Best times", ("AvenirNext-Bold", 24), TEXT)
-        self.size_control = ChoiceRow(SIZE_LABELS, self.size_changed)
-        self.level_control = ChoiceRow(DIFFICULTY_LABELS, self.level_changed)
-        self.empty_label = make_label(
-            "No solves on this board yet", ("AvenirNext-Medium", 15), MUTED)
 
-        self.time_labels = []
-        self.date_labels = []
-        for _ in range(TOP_LENGTH):
-            self.time_labels.append(make_label(
-                "", ("AvenirNext-DemiBold", 17), TEXT, alignment=ui.ALIGN_LEFT))
-            self.date_labels.append(make_label(
-                "", ("AvenirNext-Medium", 15), MUTED, alignment=ui.ALIGN_RIGHT))
+def records_enabled_for(selection):
+    """Fade the levels a board size never reaches; every size stays offered."""
+    offered = rules.DIFFICULTIES_BY_SIZE[rules.BOARD_SIZES[selection[0]]]
+    return [None, [difficulty in offered for difficulty in rules.DIFFICULTIES]]
 
-        self.back_button = make_button("Back to settings", self.back_tapped)
 
-        for view in (
-            [self.title_label, self.size_control, self.level_control, self.empty_label]
-            + self.time_labels + self.date_labels + [self.back_button]
-        ):
-            self.add_subview(view)
-
-    def layout(self):
-        column = min(320, self.width - 48)
-        left = (self.width - column) / 2
-
-        y = self.TOP
-        self.title_label.frame = (left, y, column, 36)
-        y += 52
-        self.size_control.frame = (left, y, column, 40)
-        y += 52
-        self.level_control.frame = (left, y, column, 40)
-        y += 56
-        self.empty_label.frame = (left, y, column, 24)
-        for index, (time_label, date_label) in enumerate(
-                zip(self.time_labels, self.date_labels)):
-            row_y = y + index * self.ROW_HEIGHT
-            time_label.frame = (left, row_y, column / 2, self.ROW_HEIGHT)
-            date_label.frame = (left + column / 2, row_y, column / 2, self.ROW_HEIGHT)
-        y += TOP_LENGTH * self.ROW_HEIGHT + 20
-        self.back_button.frame = (left, y, column, 52)
-
-    def open(self, size, level):
-        self.size = size
-        self.level = level
-        self.size_control.selected_index = rules.BOARD_SIZES.index(size)
-        self.show_board()
-        self.hidden = False
-        self.bring_to_front()
-
-    def show_board(self):
-        """Fade levels this size never reaches, then list its fastest solves."""
-        offered = rules.DIFFICULTIES_BY_SIZE[self.size]
-        reachable = [difficulty in offered for difficulty in rules.DIFFICULTIES]
-        self.level_control.set_enabled(reachable)
-        if not reachable[self.level - 1]:
-            self.level = rules.DIFFICULTIES.index(offered[-1]) + 1
-        self.level_control.selected_index = self.level - 1
-
-        records = self.screen.records
-        runs = records.top(best_times_key(self.size, self.level)) if records else []
-        self.empty_label.hidden = bool(runs)
-        for index, (time_label, date_label) in enumerate(
-                zip(self.time_labels, self.date_labels)):
-            if index < len(runs):
-                run = runs[index]
-                time_label.text = "%d.   %s" % (index + 1, format_time(run["seconds"]))
-                date_label.text = time.strftime("%d %b %Y", time.localtime(run["when"]))
-            else:
-                time_label.text = ""
-                date_label.text = ""
-
-    def size_changed(self, sender):
-        self.size = rules.BOARD_SIZES[sender.selected_index]
-        self.show_board()
-
-    def level_changed(self, sender):
-        self.level = sender.selected_index + 1
-        self.show_board()
-
-    def back_tapped(self, sender):
-        self.hidden = True
+def records_format_for(selection):
+    return format_time
 
 
 class SudokuScreen(ui.View):
@@ -497,7 +419,12 @@ class SudokuScreen(ui.View):
 
         self.picker = CellPicker(self.value_picked, notes_enabled=True)
         self.settings_panel = SettingsPanel(self)
-        self.best_times_panel = BestTimesPanel(self)
+        self.best_times_panel = RecordsPanel(
+            "Best times", (SIZE_LABELS, DIFFICULTY_LABELS),
+            key_for=records_key_for, format_for=records_format_for,
+            book=self.records, enabled_for=records_enabled_for,
+            empty_text="No solves on this board yet",
+        )
 
         for view in (
             self.status_label,
@@ -777,7 +704,7 @@ class SudokuScreen(ui.View):
 
     def open_best_times(self):
         """Called from Settings: the best times for the current puzzle's board."""
-        self.best_times_panel.open(self.puzzle.size, self.puzzle_level())
+        self.best_times_panel.open(records_selection(self.puzzle.size, self.puzzle_level()))
 
     def record_solve(self):
         """Add the solve time to its board's best times, saved now.
