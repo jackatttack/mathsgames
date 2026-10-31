@@ -90,14 +90,15 @@ def load_entry(game):
 
 # Packages re-imported each time a game opens (and for each theme preview),
 # so their module-level colour constants are read again (style/theme.py).
-REFRESHED_PACKAGES = ("games", "tilegame")
+REFRESHED_PACKAGES = ("boardkit", "games", "tilegame")
 
 
 def refresh_game_modules():
-    """Forget games.* and tilegame.* so the next import reads current colours.
+    """Forget boardkit, games and tilegame modules so the next import reads
+    current colours (and, while developing, current code).
 
     Views already built keep the modules they were made with. The launcher
-    never imports either package when it loads, so nothing it holds goes
+    never imports these packages when it loads, so nothing it holds goes
     stale.
     """
     for name in list(sys.modules):

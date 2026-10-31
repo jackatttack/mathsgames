@@ -75,6 +75,15 @@ RELEASED = (
         entry="games.gradient.entry:create_view",
         status="playable",
     ),
+    GameInfo(
+        game_id="fold",
+        title="Fold",
+        tagline="Fold the paper until the board is one colour",
+        icon="△",
+        accent="mint",
+        entry="games.fold.entry:create_view",
+        status="playable",
+    ),
 )
 
 # Not ready to ship yet. Listed after the released games in a dev copy.

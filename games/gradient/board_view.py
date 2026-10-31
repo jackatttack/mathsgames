@@ -10,12 +10,17 @@ does anything move on screen.
 Input: drag a tile onto another, or tap one and then another. Anchored tiles
 (dotted) never move.
 
+Cells here are Gradient's cell numbers, 0 at the top left along each row.
+Geometry comes from a boardkit Grid, which works in (row, col); cell_frame
+and cell_at convert.
+
 Motion runs on one frame clock: update() with update_interval set once,
 idle unless something is moving (see the pythonista-ui-stability guide).
+A boardkit TrackSet says where each moving tile is; this view sets it.
 
     swap     both tiles travel on arcs that pass beside each other and
-             settle with a small overshoot (swap_motion.py), as chosen in
-             labs/gradient_swap_lab.py
+             settle with a small overshoot (boardkit.paths.arc), as chosen
+             in labs/gradient_swap_lab.py
     intro    a new level shows solved for a moment, then every moved tile
              arcs out to its dealt cell; a touch skips to the end
     wave     once solved, pulses ripple out from the last tile placed, then
@@ -31,8 +36,10 @@ import time
 
 import ui
 
+from boardkit import clock, paths
+from boardkit.grid import Grid
 from style import theme
-from games.gradient import levels, swap_motion, wave
+from games.gradient import levels, wave
 
 
 TEXT = theme.color("text")
@@ -50,6 +57,8 @@ LIFT_GROW = 0.18             # a lifted tile grows by this share of its size
 LIFT_SECONDS = 0.08
 SETTLE_SECONDS = 0.18
 SWAP_SECONDS = 0.32
+SWAP_BEND = 0.18             # how far swapping tiles bow apart, as a share of the distance
+SWAP_OVERSHOOT = 0.8         # how far a swapped tile overshoots before settling
 DRAG_START = 8               # points a finger moves before a tap becomes a drag
 INTRO_HOLD = 1.0             # the solved board shows this long before the shuffle
 INTRO_SECONDS = 0.9          # one tile's flight out to its dealt cell
@@ -99,6 +108,7 @@ class GradientBoardView(ui.View):
         self.locked = False          # the theme preview: touches do nothing
         self.seamless = False        # solved and shown whole: no gaps, no dots
         self.cols, self.rows = 1, 1
+        self.grid = Grid(1, 1, margin=MARGIN, gap=GAP, max_aspect=MAX_TILE_ASPECT)
 
         self.tiles = [TileView() for _ in range(POOL_SIZE)]
         for tile in self.tiles:
@@ -113,8 +123,7 @@ class GradientBoardView(ui.View):
 
         self.selected = None         # tap-tap: the first tile picked, by cell
         self.press = None            # the finger currently down, if any
-        self.tracks = []             # moving tiles: (tile, start, end, side, delay, seconds, bend, overshoot)
-        self.tracks_started = None
+        self.tracks = clock.TrackSet()   # tiles moving on the frame clock
         self.intro_playing = False
         self.intro_pending = False   # an intro waiting for the board to have a size
         self.wave_starts = None      # {cell: start seconds} while the wave plays
@@ -131,6 +140,7 @@ class GradientBoardView(ui.View):
         self.stop_motion()
         self.model = model
         self.cols, self.rows = model.cols, model.rows
+        self.grid.set_shape(self.cols, self.rows)
         self.selected = None
         self.press = None
         self.seamless = model.is_solved()
@@ -182,43 +192,30 @@ class GradientBoardView(ui.View):
 
     # --- geometry ------------------------------------------------------------------
 
-    def cell_size(self):
-        available_width = max(0, self.width - 2 * MARGIN)
-        available_height = max(0, self.height - 2 * MARGIN)
-        width = available_width / self.cols
-        height = min(available_height / self.rows, width * MAX_TILE_ASPECT)
-        return min(width, height), height
-
-    def origin(self):
-        width, _ = self.cell_size()
-        return ((self.width - width * self.cols) / 2, MARGIN)
+    def fitted_grid(self):
+        """The grid, fitted to this view's current size."""
+        if (self.grid.view_width, self.grid.view_height) != (self.width, self.height):
+            self.grid.resize(self.width, self.height)
+        return self.grid
 
     def cell_frame(self, cell, gap=None):
+        """A cell's tile frame, by cell number. Gaps close once the board is solved."""
         if gap is None:
             gap = 0.0 if self.seamless else GAP
-        row, col = divmod(cell, self.cols)
-        width, height = self.cell_size()
-        left, top = self.origin()
-        return (left + col * width + gap / 2, top + row * height + gap / 2,
-                width - gap, height - gap)
+        grid = self.fitted_grid()
+        return grid.cell_frame(grid.cell_of(cell), gap)
 
     def lifted_frame(self, cell, centre=None):
         x, y, width, height = self.cell_frame(cell)
         if centre is None:
             centre = (x + width / 2, y + height / 2)
-        width, height = width * (1 + LIFT_GROW), height * (1 + LIFT_GROW)
-        return (centre[0] - width / 2, centre[1] - height / 2, width, height)
+        return paths.frame_around(centre, width * (1 + LIFT_GROW), height * (1 + LIFT_GROW))
 
     def cell_at(self, point):
-        width, height = self.cell_size()
-        if width <= 0 or height <= 0:
-            return None
-        left, top = self.origin()
-        col = int((point[0] - left) // width)
-        row = int((point[1] - top) // height)
-        if 0 <= col < self.cols and 0 <= row < self.rows:
-            return row * self.cols + col
-        return None
+        """The cell number under point, or None off the board."""
+        grid = self.fitted_grid()
+        cell = grid.cell_at(point)
+        return None if cell is None else grid.index_of(cell)
 
     def is_free(self, cell):
         return cell is not None and self.model is not None and not self.model.is_anchor(cell)
@@ -351,11 +348,12 @@ class GradientBoardView(ui.View):
         moved.border_width = other.border_width = 0
         other.bring_to_front()
         moved.bring_to_front()
+        swap_path = paths.arc(1, SWAP_BEND, SWAP_OVERSHOOT)
         self.start_tracks([
-            (moved, tuple(moved.frame), self.cell_frame(second), 1, 0.0, SWAP_SECONDS,
-             swap_motion.ARC_BEND, swap_motion.OVERSHOOT),
-            (other, tuple(other.frame), self.cell_frame(first), 1, 0.0, SWAP_SECONDS,
-             swap_motion.ARC_BEND, swap_motion.OVERSHOOT),
+            clock.Track(moved, tuple(moved.frame), self.cell_frame(second), SWAP_SECONDS,
+                        path=swap_path),
+            clock.Track(other, tuple(other.frame), self.cell_frame(first), SWAP_SECONDS,
+                        path=swap_path),
         ])
         if self.model.is_solved():
             self.celebrate(second)
@@ -367,38 +365,34 @@ class GradientBoardView(ui.View):
         if self.superview is None:
             return
         now = time.time()
-        if self.tracks:
+        if self.tracks.moving:
             self.step_tracks(now)
         if self.wave_starts is not None:
             self.step_wave(now)
 
+    def set_frames(self, moves):
+        """Apply (tile, frame) pairs from the track set."""
+        for tile, frame in moves:
+            tile.frame = frame
+
     def start_tracks(self, tracks):
-        self.finish_tracks()
-        self.tracks = tracks
-        self.tracks_started = time.time()
+        """Play these tracks now, snapping any still running to their ends first."""
+        self.set_frames(self.tracks.start(tracks, time.time()))
+        self.intro_playing = False
 
     def step_tracks(self, now):
-        elapsed = now - self.tracks_started
-        finished = True
-        for tile, start, end, side, delay, seconds, bend, overshoot in self.tracks:
-            progress = (elapsed - delay) / seconds
-            if progress < 1.0:
-                finished = False
-            if progress > 0:
-                tile.frame = swap_motion.frame_at(
-                    start, end, min(progress, 1.0), side, bend=bend, overshoot=overshoot)
-        if finished:
-            self.finish_tracks()
+        self.set_frames(self.tracks.step(now))
+        if not self.tracks.moving:
+            self.intro_playing = False
 
     def finish_tracks(self):
         """Snap every moving tile to the end of its track."""
-        for tile, _, end, *_ in self.tracks:
-            tile.frame = end
-        self.tracks = []
+        self.set_frames(self.tracks.finish())
         self.intro_playing = False
 
     def start_intro(self):
         """Every tile not already home arcs from its home cell out to where it was dealt."""
+        intro_path = paths.arc(1, INTRO_BEND, INTRO_OVERSHOOT)
         tracks = []
         for cell in range(self.cols * self.rows):
             number = self.model.tile_in(cell)
@@ -408,8 +402,9 @@ class GradientBoardView(ui.View):
             home_row, home_col = divmod(number, self.cols)
             sweep = (home_row + home_col) / max(1, self.rows + self.cols - 2)
             delay = INTRO_HOLD + INTRO_SWEEP * sweep
-            tracks.append((self.tiles[number], self.cell_frame(number), self.cell_frame(cell),
-                           1, delay, INTRO_SECONDS, INTRO_BEND, INTRO_OVERSHOOT))
+            tracks.append(clock.Track(self.tiles[number], self.cell_frame(number),
+                                      self.cell_frame(cell), INTRO_SECONDS,
+                                      delay=delay, path=intro_path))
         self.start_tracks(tracks)
         self.intro_playing = bool(tracks)
 
@@ -433,7 +428,8 @@ class GradientBoardView(ui.View):
                 if cell not in self.wave_raised:
                     tile.bring_to_front()
                     self.wave_raised.add(cell)
-                tile.frame = wave.scaled(self.cell_frame(cell), wave.pulse_scale(since))
+                scale = paths.pulse_scale(since, wave.PULSE_SECONDS, wave.PULSE_GROW)
+                tile.frame = paths.scaled(self.cell_frame(cell), scale)
             return
         closing = min(1.0, (elapsed - pulses_end) / CLOSE_SECONDS)
         gap = GAP * (1 - closing)
