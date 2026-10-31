@@ -108,8 +108,45 @@ def minus(shape, cut):
     return lambda u: shape(u) and not cut(u)
 
 
+class Texture:
+    """Two colours laid in a small repeating pattern, triangle by triangle:
+
+        checker   alternate triangles (one points each way)
+        columns   alternate strips of triangles
+        diamonds  alternate rhombi of two triangles
+        bands     alternate thin diagonal bands
+    """
+
+    KINDS = ("checker", "columns", "diamonds", "bands")
+
+    def __init__(self, kind, first, second):
+        if kind not in self.KINDS:
+            raise ValueError("texture must be one of {}, not {!r}".format(self.KINDS, kind))
+        self.kind = kind
+        self.first = first
+        self.second = second
+
+    def colour(self, grid, cell, u):
+        if self.kind == "checker":
+            odd = grid.points_out(cell)
+        elif self.kind == "columns":
+            odd = cell[0] % 2 == 0
+        elif self.kind == "diamonds":
+            odd = (math.floor(u[1]) + math.floor(u[2])) % 2 == 0
+        else:
+            odd = math.floor(u[1]) % 2 == 0
+        return self.first if odd else self.second
+
+
+def colour_of(paint, grid, cell, u):
+    """A layer's paint for one cell: a colour number, or a Texture's choice."""
+    if isinstance(paint, Texture):
+        return paint.colour(grid, cell, u)
+    return paint
+
+
 class Layer:
-    """One shape in one colour. turns lists the 60-degree turns it is drawn at
+    """One shape in one colour (a number, or a Texture). turns lists the 60-degree turns it is drawn at
     (all six makes it six-fold); shifts lists whole (u1, u2) moves of its anchor."""
 
     def __init__(self, shape, colour, turns=(0,), shifts=((0, 0),)):
@@ -131,16 +168,18 @@ class Composition:
         """Colour numbers for every cell. A background of None leaves the
         colours of under (another painting) showing between the layers."""
         lattice = Lattice(grid)
+        cells = grid.cells()
         if self.background is None:
             colours = list(under)
         else:
-            colours = [self.background] * len(grid.cells())
-        for index in range(len(colours)):
+            colours = [colour_of(self.background, grid, cell, lattice.coordinates(index))
+                       for index, cell in enumerate(cells)]
+        for index, cell in enumerate(cells):
             for layer in self.layers:
                 for turn in layer.turns:
                     for shift in layer.shifts:
                         if layer.shape(lattice.coordinates(index, turn, shift)):
-                            colours[index] = layer.colour
+                            colours[index] = colour_of(layer.colour, grid, cell, lattice.coordinates(index))
         return colours
 
 
@@ -288,6 +327,116 @@ def honeycomb(rng):
     return Bands(band, colours, "honeycomb")
 
 
+def nested(rng):
+    """Triangles inside triangles, each pointing the other way, like KAMI's
+    nested-triangle chapter."""
+    count = rng.choice((3, 4))
+    colours = list(range(1, count + 1))
+    rng.shuffle(colours)
+    largest = rng.choice((5, 6))
+    step = rng.choice((1, 2)) if largest == 6 else 1
+    layers = []
+    for level, size in enumerate(range(largest, 0, -step)):
+        layers.append(Layer(triangle(size, flip=level % 2 == 1), colours[level % count]))
+    if rng.random() < 0.6:
+        # a hexagonal ring laid over the triangles, cutting their points
+        inner = rng.choice((1, 2, 3))
+        layers.append(Layer(ring(inner, inner + 1), colours[rng.randrange(count)]))
+    return Composition(0, layers, "nested")
+
+
+def hex_cell(u, radius):
+    """(centre class 0-2, (c1, c2)) of the radius-hexagon tiling cell holding u."""
+    best = None
+    for p in range(-8, 9):
+        for q in range(-8, 9):
+            c1 = p * 2 * radius + q * radius
+            c2 = -p * radius + q * radius
+            if abs(u[1] - c1) > 3 * radius or abs(u[2] - c2) > 3 * radius:
+                continue
+            distance = max(abs(u[1] - c1), abs(u[2] - c2), abs(u[1] + u[2] - c1 - c2))
+            if best is None or distance < best[0]:
+                best = (distance, (p - q) % 3, (c1, c2))
+    return best[1], best[2]
+
+
+def tumbling(rng):
+    """Tumbling blocks: hexagons split into three rhombi, a cube each."""
+    radius = rng.choice((2, 3))
+    faces = list(range(3))
+    rng.shuffle(faces)
+    turn = rng.randrange(2)
+
+    def band(u):
+        cls, (c1, c2) = hex_cell(u, radius)
+        # angle of the point from its hexagon's centre, in sixths
+        x = u[3][0] - (c1 - c2) * 0.0
+        du1, du2 = u[1] - c1, u[2] - c2
+        across = (du1 + du2) * DEPTH
+        along = (du1 - du2) * DEPTH / (2 * math.cos(math.radians(30)))
+        sixth = int((math.degrees(math.atan2(across, along)) % 360) // 60)
+        return ((sixth + turn) % 6) // 2
+    return Bands(band, faces, "tumbling")
+
+
+def cubes(rng):
+    """A few big cubes stacked over a triangle texture, mirror-symmetric."""
+    radius = 2
+    texture = Texture(rng.choice(("checker", "columns", "diamonds")), 0, 1)
+    # Touching cubes sit on the hexagon-centre lattice (2r, -r), (r, r).
+    # Mirroring left to right swaps (c1, c2) for (-c2, -c1).
+    centres = []
+    for p in range(-3, 4):
+        for q in range(-3, 4):
+            c1, c2 = p * 2 * radius + q * radius, -p * radius + q * radius
+            across = (c1 + c2) * DEPTH
+            along = (c1 - c2) / 2.0
+            if abs(across) <= 3.2 and abs(along) <= 5.5:
+                centres.append((c1, c2))
+    rng.shuffle(centres)
+    chosen = []
+    for c1, c2 in centres:
+        if len(chosen) >= rng.randint(4, 7):
+            break
+        if (c1, c2) not in chosen:
+            chosen.append((c1, c2))
+            if (-c2, -c1) not in chosen:
+                chosen.append((-c2, -c1))
+    top, left, right = 2, 3, 4
+    layers = []
+    for shift in chosen:
+        for sixths, colour in (((0, 1), top), ((2, 3), left), ((4, 5), right)):
+            layers.append(Layer(_cube_face(radius, sixths), colour, shifts=(shift,)))
+    return Composition(texture, layers, "cubes")
+
+
+def _cube_face(radius, sixths):
+    def shape(u):
+        if max(abs(u[0]), abs(u[1]), abs(u[2])) > radius:
+            return False
+        across = u[0] * DEPTH
+        along = (u[1] - u[2]) * DEPTH / (2 * math.cos(math.radians(30)))
+        sixth = int((math.degrees(math.atan2(across, along)) % 360) // 60)
+        return sixth in sixths
+    return shape
+
+
+def plaid(rng):
+    """Vertical stripes crossed by wide diagonal bands, a woven tartan."""
+    stripe = rng.choice((1, 2))
+    band_width = rng.choice((3, 4))
+    gap = rng.choice((1, 2))
+    period = band_width + gap
+    a, b, c, d = _colours(rng, 4)
+    stripes = lambda u: math.floor(u[0] / stripe) % 2 == 0
+    inside = lambda u: (math.floor(u[1]) % period) < band_width
+    in_gap = lambda u: (math.floor(u[1]) % period) >= band_width
+    return Composition(0, [Layer(stripes, a),
+                           Layer(lambda u: inside(u) and not stripes(u), b),
+                           Layer(lambda u: inside(u) and stripes(u), c),
+                           Layer(in_gap, d)], "plaid")
+
+
 def layered(rng):
     """A band motif with a star or rosette laid over its middle."""
     base = rng.choice((chevrons, spiral, honeycomb, quilt))(rng)
@@ -328,6 +477,10 @@ MOTIFS = {
     "weave": weave,
     "honeycomb": honeycomb,
     "layered": layered,
+    "nested": nested,
+    "tumbling": tumbling,
+    "cubes": cubes,
+    "plaid": plaid,
 }
 
 

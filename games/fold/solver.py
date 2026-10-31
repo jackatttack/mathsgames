@@ -23,14 +23,17 @@ Other speed-ups:
 - the cheap colour bound is checked before the groups are worked out.
 
 A node budget keeps callers responsive: past it, solve() returns the
-greedy plan instead, marked exact=False, so its length is only an upper
-bound on par.
+shorter of the greedy plan and pivot_plan() (flood outwards from a central
+region, a beam search), marked exact=False, so its length is only an
+upper bound on par. Textured boards with 100+ regions rely on it.
 """
 
 
 # --- editable effort ---------------------------------------------------------
 
-SOLVE_BUDGET = 50000    # positions searched before solve() settles for greedy
+SOLVE_BUDGET = 50000    # positions searched before solve() settles for a plan
+PIVOT_CANDIDATES = 3    # pivot_plan: most central regions tried as the pivot
+PIVOT_BEAM = 40         # pivot_plan: positions kept at each depth
 
 
 # --- internal markers --------------------------------------------------------
@@ -176,7 +179,15 @@ def solve(graph, budget=SOLVE_BUDGET):
         if outcome is OUT_OF_BUDGET or outcome == NO_LIMIT:
             break
         bound = outcome
-    return Solution(greedy_plan(graph), False, search.nodes)
+    return Solution(best_effort_plan(graph), False, search.nodes)
+
+
+def best_effort_plan(graph, candidates=PIVOT_CANDIDATES, beam=PIVOT_BEAM):
+    """The shorter of the greedy plan and the pivot plan: par's upper bound
+    when the search runs out of budget. Smaller beams are quicker."""
+    greedy = greedy_plan(graph)
+    pivot = pivot_plan(graph, candidates, beam)
+    return pivot if pivot and len(pivot) < len(greedy) else greedy
 
 
 def greedy_plan(graph, limit=500):
@@ -229,3 +240,62 @@ class _Search:
             self.path.pop()
             smallest = min(smallest, outcome)
         return smallest
+
+
+# --- big boards: flooding outwards from one region -------------------------------------
+
+
+
+def _eccentricity(links, start):
+    return _farthest(links, start)[1]
+
+
+def pivot_plan(graph, candidates=PIVOT_CANDIDATES, beam=PIVOT_BEAM):
+    """Taps that flood outwards from one central region, as KAMI players do
+    on busy boards. A beam search over colour choices for the pivot's group,
+    tried from the few most central regions; the shortest plan wins. Never
+    proves anything, but on textured boards it beats greedy by a lot."""
+    start = tuple(graph.colours)
+    group_of, groups = merged_groups(graph, start)
+    if len(groups) <= 1:
+        return []
+    links = group_links(graph, group_of, groups)
+    central = sorted(range(len(groups)), key=lambda group: _eccentricity(links, group))[:candidates]
+    best = None
+    for group in central:
+        pivot = groups[group][0]
+        plan = _pivot_beam(graph, start, pivot, beam)
+        if plan is not None and (best is None or len(plan) < len(best)):
+            best = plan
+    return best or []
+
+
+def _pivot_beam(graph, start, pivot, beam):
+    frontier = [(start, [])]
+    seen = {start}
+    for depth in range(200):
+        following = []
+        for state, path in frontier:
+            group_of, groups = merged_groups(graph, state)
+            if len(groups) == 1:
+                return _as_taps(graph, path)
+            links = group_links(graph, group_of, groups)
+            own = group_of[pivot]
+            members = groups[own]
+            for colour in {state[groups[other][0]] for other in links[own]}:
+                child = recolour(state, members, colour)
+                if child in seen:
+                    continue
+                seen.add(child)
+                child_of, child_groups = merged_groups(graph, child)
+                if len(child_groups) == 1:
+                    return _as_taps(graph, path + [(members, colour)])
+                child_links = group_links(graph, child_of, child_groups)
+                reach = _eccentricity(child_links, child_of[pivot])
+                score = (max(reach, len(set(child)) - 1), len(child_groups))
+                following.append((score, child, path + [(members, colour)]))
+        following.sort(key=lambda item: item[0])
+        frontier = [(state, path) for score, state, path in following[:beam]]
+        if not frontier:
+            return None
+    return None
