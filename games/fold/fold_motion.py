@@ -94,24 +94,32 @@ def _schedule(move, style, grid):
 
 
 def _scatter_tree(move, grid):
-    """(offsets, parents, speed) for a random spanning tree of the move's region.
+    """(offsets, parents, speed) for a random spanning tree of the move's
+    region, grown from the tapped cell. Seeded from the move, so the same
+    move always grows the same tree (see _scatter_from)."""
+    rng = random.Random(hash((move.cell, len(move.cells), move.old_colour, move.new_colour)))
+    return _scatter_from(grid, set(move.cells), [move.cell], rng)
+
+
+def _scatter_from(grid, region, starts, rng):
+    """(offsets, parents, speed): a random spanning forest of region grown
+    from the start cells, the heart of the scatter style.
 
     Grown like Dijkstra's algorithm with random edge weights: a child's
-    start is its parent's start plus a random share of a fold. Seeded from
-    the move, so the same move always grows the same tree.
+    start is its parent's start plus a random share of a fold. Start cells
+    have no parent (their paper grows in place).
 
     A big region plays faster by scaling the whole animation, start times
     and fold length together, so every child still waits until its parent
     is part way over: the chain never breaks, it just runs in fast forward.
     speed (at most 1, at least SCATTER_MIN_SPEED) is that scale.
     """
-    rng = random.Random(hash((move.cell, len(move.cells), move.old_colour, move.new_colour)))
-    region = set(move.cells)
-    offsets = {move.cell: 0.0}
-    parents = {move.cell: None}
+    offsets = {cell: 0.0 for cell in starts}
+    parents = {cell: None for cell in starts}
     settled = set()
-    queue = [(0.0, 0, move.cell)]
-    pushes = 1
+    queue = [(0.0, order, cell) for order, cell in enumerate(starts)]
+    heapq.heapify(queue)
+    pushes = len(queue)
     while queue:
         offset, _, cell = heapq.heappop(queue)
         if cell in settled:
@@ -156,6 +164,77 @@ def plan_undo(move, now, style="scatter", grid=None):
     return [Fold(cell, parents[cell], move.old_colour, now + latest - offsets[cell], seconds, style,
                  sheet_colour=move.new_colour, reverse=True)
             for cell in move.cells]
+
+
+# --- the winning finale ----------------------------------------------------------------
+# Once the board is one colour, every triangle folds over to a new colour, in
+# the same scatter chains as a move, closing in from the board's edge; then a
+# hexagon card unfolds from the middle, one triangle at a time, and its words
+# fade in.
+
+FINALE_STARTS = 6                # edge cells the closing chains start from
+CARD_TRIANGLE_SECONDS = 0.24     # each of the card's six triangles unfolding
+CARD_TRIANGLE_GAP = 0.11         # delay from one card triangle to the next
+CARD_TEXT_SECONDS = 0.3          # words fading in once the hexagon is whole
+CARD_TOTAL_SECONDS = 5 * CARD_TRIANGLE_GAP + CARD_TRIANGLE_SECONDS + CARD_TEXT_SECONDS
+
+
+def plan_finale(grid, colour, now, seed=0):
+    """Folds turning every cell to colour, in exactly the scatter style of a
+    move: the same random chains, handoffs and speed-up as a big flood. The
+    chains start from FINALE_STARTS cells spread round the board's edge, so
+    the paper closes in on the middle."""
+    rng = random.Random(seed)
+    starts = finale_starts(grid, rng)
+    offsets, parents, speed = _scatter_from(grid, set(grid.cells()), starts, rng)
+    return [Fold(cell, parents[cell], colour, now + offsets[cell], FOLD_SECONDS * speed, "scatter")
+            for cell in grid.cells()]
+
+
+def finale_starts(grid, rng, count=None):
+    """count edge cells spaced evenly round the board, from a random point."""
+    count = count or FINALE_STARTS
+    centre_strip, centre_slot = (grid.strips - 1) / 2.0, (grid.slots - 1) / 2.0
+    edge = [cell for cell in grid.cells() if len(grid.neighbours(cell)) < 3]
+    edge.sort(key=lambda cell: math.atan2(cell[0] - centre_strip, (cell[1] - centre_slot) / 2.0))
+    first = rng.randrange(len(edge))
+    return [edge[(first + index * len(edge) // count) % len(edge)] for index in range(count)]
+
+
+def hexagon_corners(centre, radius):
+    """The six corners of a flat-topped hexagon, starting at the right."""
+    return [(centre[0] + radius * math.cos(math.radians(60 * k)),
+             centre[1] + radius * math.sin(math.radians(60 * k))) for k in range(6)]
+
+
+def card_unfold(centre, radius, elapsed):
+    """(triangles, text_alpha) for the result card elapsed seconds after it began.
+
+    triangles lists (points, shade) for each of the hexagon's six triangles
+    that has started: the first grows from the centre, and each next one
+    turns over from the one before, hinged on the spoke they share.
+    """
+    corners = hexagon_corners(centre, radius)
+    triangles = []
+    for k in range(6):
+        t = (elapsed - k * CARD_TRIANGLE_GAP) / CARD_TRIANGLE_SECONDS
+        if t <= 0:
+            break
+        eased = smoothstep(t)
+        hinge = corners[k]
+        apex = corners[(k + 1) % 6]
+        if k == 0:
+            points = [(centre[0] + (x - centre[0]) * eased, centre[1] + (y - centre[1]) * eased)
+                      for x, y in (centre, hinge, apex)]
+            triangles.append((points, 1.0))
+            continue
+        turn = -math.cos(math.pi * eased)
+        foot = ((centre[0] + hinge[0]) / 2, (centre[1] + hinge[1]) / 2)
+        tip = (foot[0] + turn * (apex[0] - foot[0]), foot[1] + turn * (apex[1] - foot[1]))
+        triangles.append(([centre, hinge, tip], EDGE_ON_SHADE + (1 - EDGE_ON_SHADE) * abs(turn)))
+    text_start = 5 * CARD_TRIANGLE_GAP + CARD_TRIANGLE_SECONDS
+    text_alpha = min(1.0, max(0.0, (elapsed - text_start) / CARD_TEXT_SECONDS))
+    return triangles, text_alpha
 
 
 def progress(fold, now):

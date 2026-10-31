@@ -203,10 +203,12 @@ class BoardView(ui.View):
     """Draws the board: a cached image of the settled colours, plus any
     sheets in motion on top. One frame clock drives every fold."""
 
-    def __init__(self, on_tap, on_settled):
+    def __init__(self, on_tap, on_settled, on_card_open=None):
         super().__init__()
         self.on_tap = on_tap
         self.on_settled = on_settled
+        self.on_card_open = on_card_open
+        self.card = None          # the result card while it unfolds and after
         self.background_color = BACKGROUND
         self.grid = None
         self.board = None
@@ -219,6 +221,7 @@ class BoardView(ui.View):
 
     def load(self, puzzle):
         self.folds = []
+        self.card = None
         self.grid = puzzle.grid(margin=BOARD_MARGIN, gap=BOARD_GAP)
         self.board = puzzle.board(self.grid)
         self.palette = [rgb(colour) for colour in puzzle.palette]
@@ -275,17 +278,51 @@ class BoardView(ui.View):
     def moving(self):
         return bool(self.folds)
 
+    # --- the winning finale --------------------------------------------------------
+
+    def start_finale(self, colour, seed=0):
+        """Fold every triangle over to colour, from the edges in to the middle."""
+        self.finish()
+        self.folds = fold_motion.plan_finale(self.grid, colour, time.time(), seed)
+        self.set_needs_display()
+
+    def card_geometry(self):
+        """(centre, radius) of the result card in this view."""
+        x, y, width, height = self.grid.trimmed_frame()
+        radius = min(width * 0.47, 170)
+        return (x + width / 2, y + height / 2 - radius * 0.1), radius
+
+    def open_card(self, lines, face, ink, already=False):
+        """Unfold the hexagon result card in face colour with lines of text.
+
+        lines: (text, size, bold) from the top. already=True shows it whole.
+        """
+        start = time.time() - (fold_motion.CARD_TOTAL_SECONDS if already else 0.0)
+        self.card = {"start": start, "lines": lines, "face": face, "ink": ink, "open": False}
+        self.set_needs_display()
+
+    def skip_card(self):
+        if self.card is not None:
+            self.card["start"] = time.time() - fold_motion.CARD_TOTAL_SECONDS
+
     # --- frame clock -------------------------------------------------------------
 
     def update(self):
-        if self.superview is None or not self.folds:
+        if self.superview is None:
             return
-        now = time.time()
-        self.apply_landed(now)
-        self.folds = [fold for fold in self.folds if not fold_motion.done(fold, now)]
-        self.set_needs_display()
-        if not self.folds:
-            self.on_settled()
+        if self.folds:
+            now = time.time()
+            self.apply_landed(now)
+            self.folds = [fold for fold in self.folds if not fold_motion.done(fold, now)]
+            self.set_needs_display()
+            if not self.folds:
+                self.on_settled()
+        elif self.card is not None and not self.card["open"]:
+            self.set_needs_display()
+            if time.time() - self.card["start"] >= fold_motion.CARD_TOTAL_SECONDS:
+                self.card["open"] = True
+                if self.on_card_open is not None:
+                    self.on_card_open()
 
     # --- drawing -----------------------------------------------------------------
 
@@ -315,6 +352,24 @@ class BoardView(ui.View):
                 red, green, blue = self.palette[fold.sheet_colour]
                 ui.set_color((red * shade, green * shade, blue * shade))
                 path_from(points).fill()
+        if self.card is not None:
+            self.draw_card()
+
+    def draw_card(self):
+        centre, radius = self.card_geometry()
+        triangles, text_alpha = fold_motion.card_unfold(centre, radius, time.time() - self.card["start"])
+        red, green, blue = self.card["face"]
+        for points, shade in triangles:
+            ui.set_color((red * shade, green * shade, blue * shade))
+            path_from(points).fill()
+        if text_alpha <= 0:
+            return
+        ink = tuple(self.card["ink"]) + (text_alpha,)
+        y = centre[1] - radius * 0.62
+        for text, size, bold in self.card["lines"]:
+            ui.draw_string(text, rect=(centre[0] - radius, y, 2 * radius, size * 1.4),
+                           font=(BOLD if bold else FONT, size), color=ink, alignment=ui.ALIGN_CENTER)
+            y += size * 1.45
 
     def touch_began(self, touch):
         try:
@@ -377,24 +432,19 @@ class PlayView(ui.View):
         self.edit_button = make_button("Edit", self.edit_tapped, background=BACKGROUND)
         self.title_label = make_label(size=17, bold=True, align=ui.ALIGN_CENTER)
         self.status_label = make_label(size=14, colour=SOFT_INK, align=ui.ALIGN_CENTER)
-        self.board_view = BoardView(self.tap, self.settled)
+        self.board_view = BoardView(self.tap, self.settled, self.card_opened)
+        self.stage = "playing"    # playing, finale (folding to the new colour), card
         self.undo_button = make_button("Undo", self.undo_tapped, background="#2b2a2a", colour="white")
         self.undo_button.corner_radius = 0
         self.bar = ColourBar(self.choose)
 
-        self.card = ui.View()
-        self.card.background_color = (1, 1, 1, 0.96)
-        self.card.corner_radius = 14
-        self.card_title = make_label(size=26, bold=True, align=ui.ALIGN_CENTER)
-        self.card_detail = make_label(size=15, colour=SOFT_INK, align=ui.ALIGN_CENTER)
         self.next_button = make_button("Next", self.next_tapped, background=ACCENT, colour="white")
         self.home_button = make_button("Puzzles", self.back_tapped)
-        for view in (self.card_title, self.card_detail, self.next_button, self.home_button):
-            self.card.add_subview(view)
-        self.card.hidden = True
+        self.next_button.hidden = self.home_button.hidden = True
 
         for view in (self.back_button, self.restart_button, self.edit_button, self.title_label,
-                     self.status_label, self.board_view, self.undo_button, self.bar, self.card):
+                     self.status_label, self.board_view, self.undo_button, self.bar,
+                     self.home_button, self.next_button):
             self.add_subview(view)
 
     def layout(self):
@@ -408,20 +458,27 @@ class PlayView(ui.View):
         self.board_view.frame = (0, top, width, max(0, height - BOTTOM_BAR - top))
         self.undo_button.frame = (0, height - BOTTOM_BAR, 64, BOTTOM_BAR)
         self.bar.frame = (64, height - BOTTOM_BAR, width - 64, BOTTOM_BAR)
-        card_width, card_height = min(300, width - 40), 170
-        self.card.frame = ((width - card_width) / 2, (height - card_height) / 2 - 20, card_width, card_height)
-        self.card_title.frame = (10, 18, card_width - 20, 34)
-        self.card_detail.frame = (10, 56, card_width - 20, 22)
-        button_width = (card_width - 3 * 14) / 2
-        self.home_button.frame = (14, card_height - 58, button_width, 42)
-        self.next_button.frame = (28 + button_width, card_height - 58, button_width, 42)
+        self.place_card_buttons()
+
+    def place_card_buttons(self):
+        """Next and Puzzles sit inside the lower part of the hexagon card."""
+        if self.board_view.grid is None:
+            return
+        (cx, cy), radius = self.board_view.card_geometry()
+        left, top = self.board_view.frame[0], self.board_view.frame[1]
+        button_width = radius * 0.58
+        y = top + cy + radius * 0.3
+        self.home_button.frame = (left + cx - button_width - 5, y, button_width, 38)
+        self.next_button.frame = (left + cx + 5, y, button_width, 38)
 
     def open(self, puzzle):
         self.puzzle = puzzle
         self.solved = False
-        self.card.hidden = True
+        self.stage = "playing"
+        self.next_button.hidden = self.home_button.hidden = True
         self.title_label.text = puzzle.title
         self.board_view.load(puzzle)
+        self.place_card_buttons()
         self.bar.palette = list(puzzle.palette)
         self.bar.selected = 1 if len(puzzle.palette) > 1 else 0
         self.bar.set_needs_display()
@@ -441,6 +498,7 @@ class PlayView(ui.View):
 
     def tap(self, cell):
         if self.solved:
+            self.skip_celebration()
             return
         move = self.board_view.play(cell, self.bar.selected)
         if move is None:
@@ -454,23 +512,56 @@ class PlayView(ui.View):
             log("solved {} in {} (par {})".format(self.puzzle.puzzle_id, moves, self.puzzle.par))
 
     def settled(self):
-        """Called by the board's frame clock once every fold has landed."""
-        if self.solved and self.card.hidden:
-            self.show_result()
+        """Called by the board's frame clock once every fold has landed:
+        after the winning move, the finale; after the finale, the card."""
+        if not self.solved:
+            return
+        if self.stage == "playing":
+            self.stage = "finale"
+            self.board_view.start_finale(self.finale_colour(), seed=len(self.puzzle.colours))
+            log("finale")
+        elif self.stage == "finale":
+            self.show_card()
 
-    def show_result(self):
+    def finale_colour(self):
+        """The palette colour that stands out most from the one the board finished in."""
+        finished = self.board_view.board.colours_left()[0]
+        def lightness(index):
+            red, green, blue = self.board_view.palette[index]
+            return 0.299 * red + 0.587 * green + 0.114 * blue
+        others = [index for index in range(len(self.board_view.palette)) if index != finished]
+        return max(others, key=lambda index: abs(lightness(index) - lightness(finished)))
+
+    def show_card(self, already=False):
+        """Unfold the hexagon card, in the colour the player finished with."""
+        self.stage = "card"
         moves = self.board_view.board.moves_made
         par = self.puzzle.par
-        if moves <= par:
-            self.card_title.text = "Perfect!"
-            self.card_title.text_color = PERFECT
-        else:
-            self.card_title.text = "Solved"
-            self.card_title.text_color = INK
-        self.card_detail.text = "{} move{}  ·  par {}".format(moves, "" if moves == 1 else "s", par)
+        finished = self.board_view.board.colours_left()[0]
+        face = self.board_view.palette[finished]
+        light = 0.299 * face[0] + 0.587 * face[1] + 0.114 * face[2] > 0.55
+        ink = (0.16, 0.16, 0.17) if light else (1.0, 1.0, 1.0)
+        verdict = "★ Perfect, par {}".format(par) if moves <= par else "Par is {}".format(par)
+        lines = (("Puzzle complete", 22, True),
+                 ("in {} move{}".format(moves, "" if moves == 1 else "s"), 17, False),
+                 (verdict, 14, False),
+                 ("Well done!", 14, True))
         self.next_button.enabled = bool(self.puzzle.mode) or self.screen.next_puzzle(self.puzzle) is not None
-        self.card.hidden = False
-        self.card.bring_to_front()
+        self.board_view.open_card(lines, face, ink, already)
+
+    def card_opened(self):
+        self.place_card_buttons()
+        self.next_button.hidden = self.home_button.hidden = False
+        self.next_button.bring_to_front()
+        self.home_button.bring_to_front()
+
+    def skip_celebration(self):
+        """A tap during the celebration jumps to the open card."""
+        if self.stage == "finale":
+            self.board_view.finish()
+            self.show_card(already=True)
+        elif self.stage == "card":
+            self.board_view.skip_card()
 
     def undo_tapped(self, sender):
         try:
