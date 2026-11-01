@@ -4,7 +4,8 @@ Fold screen: a scrolling library of puzzles, and the board to play them.
     Library  Random cards (Easy, Medium, Hard) at the top, then the Journey:
              chapters of curated puzzles as thumbnails, each with its par
              or your best. A chapter opens once enough of the one before is
-             solved (UNLOCK_AFTER), unless UNLOCK_EVERYTHING is on.
+             solved at ★★ or better (UNLOCK_AFTER; stars.py), unless
+             UNLOCK_EVERYTHING is on.
     Play     the board, the level's colours along the bottom, Undo and
              Restart. Pick a colour, tap a triangle: its region folds over
              in the KAMI-style scatter chain (fold_motion.py). Solving shows
@@ -27,13 +28,14 @@ previous run kept as fold.prev.log.
 """
 
 import json
+import math
 import os
 import time
 import traceback
 
 import ui
 
-from games.fold import collection, fold_motion, maker
+from games.fold import collection, fold_motion, hints, maker, stars
 from games.fold.triangles import TriangleGrid
 
 
@@ -47,7 +49,7 @@ PREVIOUS_LOG_PATH = os.path.join(GAME_DIR, "fold.prev.log")
 # --- editable feel and layout -----------------------------------------------------
 
 STYLE = "scatter"            # fold_motion style for every move and undo
-UNLOCK_AFTER = 4             # puzzles solved in a chapter to open the next
+UNLOCK_AFTER = 4             # puzzles at ★★ or better in a chapter to open the next
 UNLOCK_EVERYTHING = False    # True opens every chapter (handy while testing)
 
 BACKGROUND = "#f4f1ea"
@@ -56,6 +58,8 @@ SOFT_INK = "#8a857c"
 CARD = "#e9e4d8"
 ACCENT = "#d9483b"
 PERFECT = "#c99a2e"
+HINT_GLOW_SECONDS = 1.4      # how long a hinted region pulses
+HINT_PULSES = 2
 BOARD_GAP = -0.6             # negative bleeds triangles together: no seams
 BOARD_MARGIN = 6
 THUMB_GAP = -0.3
@@ -150,20 +154,24 @@ def make_button(title, action, background=CARD, colour=INK, size=15):
 # --- progress -------------------------------------------------------------------
 
 class Progress:
-    """Best moves per Journey puzzle, and counts per Random mode, in one JSON file.
+    """Best moves and best stars per puzzle, and counts per Random mode, in
+    one JSON file. path None keeps everything in memory (previews).
 
-    path None keeps everything in memory (previews).
+    Saves from before stars existed hold only best moves; their stars are
+    worked out from those moves (no hints were possible then).
     """
 
     def __init__(self, path):
         self.path = path
         self.best = {}
+        self.stars = {}
         self.random = {}
         if path and os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as handle:
                     data = json.load(handle)
                 self.best = dict(data.get("best", {}))
+                self.stars = dict(data.get("stars", {}))
                 self.random = dict(data.get("random", {}))
             except (OSError, ValueError):
                 log("progress unreadable; starting fresh")
@@ -173,28 +181,41 @@ class Progress:
             return
         try:
             with open(self.path, "w", encoding="utf-8") as handle:
-                json.dump({"best": self.best, "random": self.random}, handle, indent=1, sort_keys=True)
+                json.dump({"best": self.best, "stars": self.stars, "random": self.random},
+                          handle, indent=1, sort_keys=True)
         except OSError:
             log("ERROR saving progress: " + traceback.format_exc())
 
-    def record(self, puzzle, moves):
-        """Note a solve; True when it beats the puzzle's previous best."""
+    def record(self, puzzle, moves, earned):
+        """Note a solve with the stars it earned."""
         if puzzle.mode:
             counts = self.random.setdefault(puzzle.mode, {"solved": 0, "perfect": 0})
             counts["solved"] += 1
-            if moves <= puzzle.par:
+            if earned == stars.PERFECT:
                 counts["perfect"] += 1
-            self.save()
-            return True
-        previous = self.best.get(puzzle.puzzle_id)
-        if previous is None or moves < previous:
-            self.best[puzzle.puzzle_id] = moves
-            self.save()
-            return True
-        return False
+        else:
+            before = self.stars_for(puzzle)
+            previous = self.best.get(puzzle.puzzle_id)
+            if previous is None or moves < previous:
+                self.best[puzzle.puzzle_id] = moves
+            self.stars[puzzle.puzzle_id] = max(earned, before)
+        self.save()
 
-    def solved_in(self, puzzles):
-        return sum(1 for puzzle in puzzles if puzzle.puzzle_id in self.best)
+    def stars_for(self, puzzle):
+        """Best stars earned on a puzzle, 0 if never solved."""
+        if puzzle.puzzle_id in self.stars:
+            return self.stars[puzzle.puzzle_id]
+        best = self.best.get(puzzle.puzzle_id)
+        if best is None:
+            return 0
+        return stars.stars_for(best, puzzle.par, stars.puzzle_line(puzzle))
+
+    def progressed_in(self, puzzles):
+        """How many puzzles count towards progress (★★ or better)."""
+        return sum(1 for puzzle in puzzles if self.stars_for(puzzle) >= stars.COUNTS_TOWARDS_PROGRESS)
+
+    def stars_in(self, puzzles):
+        return sum(self.stars_for(puzzle) for puzzle in puzzles)
 
 
 # --- the board -----------------------------------------------------------------
@@ -209,6 +230,7 @@ class BoardView(ui.View):
         self.on_settled = on_settled
         self.on_card_open = on_card_open
         self.card = None          # the result card while it unfolds and after
+        self.hint = None          # (cells, start) while a hint glows
         self.background_color = BACKGROUND
         self.grid = None
         self.board = None
@@ -222,6 +244,7 @@ class BoardView(ui.View):
     def load(self, puzzle):
         self.folds = []
         self.card = None
+        self.hint = None
         self.grid = puzzle.grid(margin=BOARD_MARGIN, gap=BOARD_GAP)
         self.board = puzzle.board(self.grid)
         self.palette = [rgb(colour) for colour in puzzle.palette]
@@ -301,6 +324,11 @@ class BoardView(ui.View):
         self.card = {"start": start, "lines": lines, "face": face, "ink": ink, "open": False}
         self.set_needs_display()
 
+    def show_hint(self, cells):
+        """Make cells glow for HINT_GLOW_SECONDS."""
+        self.hint = (list(cells), time.time())
+        self.set_needs_display()
+
     def skip_card(self):
         if self.card is not None:
             self.card["start"] = time.time() - fold_motion.CARD_TOTAL_SECONDS
@@ -317,6 +345,10 @@ class BoardView(ui.View):
             self.set_needs_display()
             if not self.folds:
                 self.on_settled()
+        elif self.hint is not None:
+            if time.time() - self.hint[1] > HINT_GLOW_SECONDS:
+                self.hint = None
+            self.set_needs_display()
         elif self.card is not None and not self.card["open"]:
             self.set_needs_display()
             if time.time() - self.card["start"] >= fold_motion.CARD_TOTAL_SECONDS:
@@ -352,8 +384,21 @@ class BoardView(ui.View):
                 red, green, blue = self.palette[fold.sheet_colour]
                 ui.set_color((red * shade, green * shade, blue * shade))
                 path_from(points).fill()
+        if self.hint is not None:
+            self.draw_hint()
         if self.card is not None:
             self.draw_card()
+
+    def draw_hint(self):
+        """The hinted region pulses white, twice."""
+        cells, start = self.hint
+        elapsed = time.time() - start
+        if elapsed > HINT_GLOW_SECONDS:
+            return
+        glow = 0.5 - 0.5 * math.cos(2 * math.pi * HINT_PULSES * elapsed / HINT_GLOW_SECONDS)
+        ui.set_color((1, 1, 1, 0.55 * glow))
+        for cell in cells:
+            path_from(self.grid.corners(cell)).fill()
 
     def draw_card(self):
         centre, radius = self.card_geometry()
@@ -436,6 +481,9 @@ class PlayView(ui.View):
         self.stage = "playing"    # playing, finale (folding to the new colour), card
         self.undo_button = make_button("Undo", self.undo_tapped, background="#2b2a2a", colour="white")
         self.undo_button.corner_radius = 0
+        self.hint_button = make_button("Hint", self.hint_tapped, background="#3a3838", colour="white")
+        self.hint_button.corner_radius = 0
+        self.hinted = False
         self.bar = ColourBar(self.choose)
 
         self.next_button = make_button("Next", self.next_tapped, background=ACCENT, colour="white")
@@ -443,7 +491,7 @@ class PlayView(ui.View):
         self.next_button.hidden = self.home_button.hidden = True
 
         for view in (self.back_button, self.restart_button, self.edit_button, self.title_label,
-                     self.status_label, self.board_view, self.undo_button, self.bar,
+                     self.status_label, self.board_view, self.undo_button, self.hint_button, self.bar,
                      self.home_button, self.next_button):
             self.add_subview(view)
 
@@ -452,12 +500,13 @@ class PlayView(ui.View):
         self.back_button.frame = (6, 6, 96, 32)
         self.restart_button.frame = (width - 76, 6, 70, 32)
         self.edit_button.frame = (width - 126, 6, 48, 32)
-        self.title_label.frame = (100, 4, max(0, width - 228), 22)
-        self.status_label.frame = (100, 24, max(0, width - 228), 18)
-        top = TOP_BAR + 4
+        self.title_label.frame = (100, 11, max(0, width - 228), 22)
+        self.status_label.frame = (PAD, TOP_BAR, width - 2 * PAD, 18)
+        top = TOP_BAR + 22
         self.board_view.frame = (0, top, width, max(0, height - BOTTOM_BAR - top))
-        self.undo_button.frame = (0, height - BOTTOM_BAR, 64, BOTTOM_BAR)
-        self.bar.frame = (64, height - BOTTOM_BAR, width - 64, BOTTOM_BAR)
+        self.undo_button.frame = (0, height - BOTTOM_BAR, 56, BOTTOM_BAR)
+        self.hint_button.frame = (56, height - BOTTOM_BAR, 56, BOTTOM_BAR)
+        self.bar.frame = (112, height - BOTTOM_BAR, width - 112, BOTTOM_BAR)
         self.place_card_buttons()
 
     def place_card_buttons(self):
@@ -474,6 +523,7 @@ class PlayView(ui.View):
     def open(self, puzzle):
         self.puzzle = puzzle
         self.solved = False
+        self.hinted = False
         self.stage = "playing"
         self.next_button.hidden = self.home_button.hidden = True
         self.title_label.text = puzzle.title
@@ -488,7 +538,11 @@ class PlayView(ui.View):
 
     def refresh_status(self):
         moves = self.board_view.board.moves_made
-        self.status_label.text = "Moves {}  ·  Par {}".format(moves, self.puzzle.par)
+        line = stars.puzzle_line(self.puzzle)
+        text = "Moves {}  ·  Par {}  ·  ★★ by {}".format(moves, self.puzzle.par, line)
+        if self.hinted:
+            text += "  ·  hint used"
+        self.status_label.text = text
 
     # --- actions ---------------------------------------------------------------
 
@@ -508,7 +562,8 @@ class PlayView(ui.View):
         if self.board_view.board.is_solved():
             self.solved = True
             moves = self.board_view.board.moves_made
-            self.screen.progress.record(self.puzzle, moves)
+            self.earned = stars.stars_for(moves, self.puzzle.par, stars.puzzle_line(self.puzzle), self.hinted)
+            self.screen.progress.record(self.puzzle, moves, self.earned)
             log("solved {} in {} (par {})".format(self.puzzle.puzzle_id, moves, self.puzzle.par))
 
     def settled(self):
@@ -541,10 +596,19 @@ class PlayView(ui.View):
         face = self.board_view.palette[finished]
         light = 0.299 * face[0] + 0.587 * face[1] + 0.114 * face[2] > 0.55
         ink = (0.16, 0.16, 0.17) if light else (1.0, 1.0, 1.0)
-        verdict = "★ Perfect, par {}".format(par) if moves <= par else "Par is {}".format(par)
+        earned = getattr(self, "earned", stars.COMPLETED)
+        if earned == stars.PERFECT:
+            verdict = "Perfect, par {}".format(par)
+        elif self.hinted and moves <= par:
+            verdict = "Par {} · hint used".format(par)
+        elif earned == stars.SOLVED:
+            verdict = "Par {} · ★★ by {}".format(par, stars.puzzle_line(self.puzzle))
+        else:
+            verdict = "★★ needs {} or fewer".format(stars.puzzle_line(self.puzzle))
         lines = (("Puzzle complete", 22, True),
                  ("in {} move{}".format(moves, "" if moves == 1 else "s"), 17, False),
-                 (verdict, 14, False),
+                 (stars.show(earned), 22, False),
+                 (verdict, 13, False),
                  ("Well done!", 14, True))
         self.next_button.enabled = bool(self.puzzle.mode) or self.screen.next_puzzle(self.puzzle) is not None
         self.board_view.open_card(lines, face, ink, already)
@@ -562,6 +626,27 @@ class PlayView(ui.View):
             self.show_card(already=True)
         elif self.stage == "card":
             self.board_view.skip_card()
+
+    def hint_tapped(self, sender):
+        """Show the best move from here: its colour is chosen and its region
+        glows. Caps this puzzle at ★★."""
+        try:
+            if self.solved:
+                return
+            self.board_view.finish()
+            began = time.time()
+            hint = hints.best_move(self.board_view.board)
+            if hint is None:
+                return
+            self.hinted = True
+            self.choose(hint.colour)
+            self.board_view.show_hint(hint.region)
+            self.refresh_status()
+            log("hint {} colour {}: {} moves left{} ({:.0f} ms)".format(
+                hint.cell, hint.colour, hint.moves_left, "" if hint.exact else " at most",
+                (time.time() - began) * 1000))
+        except Exception:
+            log("ERROR in hint: " + traceback.format_exc())
 
     def undo_tapped(self, sender):
         try:
@@ -1004,11 +1089,10 @@ class LibraryView(ui.View):
         for (chapter_id, puzzles, heading, count, tiles), (same_id, title, same) in zip(
                 self.chapter_rows, self.screen.chapters):
             open_ = self.screen.chapter_open(chapter_id)
-            solved = progress.solved_in(puzzles)
             if open_:
-                count.text = "{} / {}".format(solved, len(puzzles))
+                count.text = "{} / {} ★".format(progress.stars_in(puzzles), 3 * len(puzzles))
             else:
-                count.text = "Solve {} in {} to open".format(UNLOCK_AFTER, previous_title)
+                count.text = "{} at ★★ in {} to open".format(UNLOCK_AFTER, previous_title)
             previous_title = title
             for puzzle, button, badge in tiles:
                 button.enabled = open_
@@ -1016,16 +1100,13 @@ class LibraryView(ui.View):
                 self.set_badge(badge, puzzle)
 
     def set_badge(self, badge, puzzle):
-        best = self.screen.progress.best.get(puzzle.puzzle_id)
-        if best is None:
+        earned = self.screen.progress.stars_for(puzzle)
+        if earned == 0:
             badge.text = "par {}".format(puzzle.par)
             badge.text_color = SOFT_INK
-        elif best <= puzzle.par:
-            badge.text = "★ Perfect"
-            badge.text_color = PERFECT
         else:
-            badge.text = "{} moves · par {}".format(best, puzzle.par)
-            badge.text_color = INK
+            badge.text = stars.show(earned)
+            badge.text_color = PERFECT if earned == stars.PERFECT else INK
 
     def mine_tapped(self, sender):
         try:
@@ -1109,7 +1190,7 @@ class FoldScreen(ui.View):
             if this_id == chapter_id:
                 if index == 0:
                     return True
-                return self.progress.solved_in(self.chapters[index - 1][2]) >= UNLOCK_AFTER
+                return self.progress.progressed_in(self.chapters[index - 1][2]) >= UNLOCK_AFTER
         return False
 
     def next_puzzle(self, puzzle):
