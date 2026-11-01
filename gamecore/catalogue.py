@@ -84,6 +84,15 @@ RELEASED = (
         entry="games.fold.entry:create_view",
         status="playable",
     ),
+    GameInfo(
+        game_id="twenty48",
+        title="Double Up",
+        tagline="Swipe to merge tiles: doubling or Fibonacci",
+        icon="×2",
+        accent="warm",
+        entry="games.twenty48.entry:create_view",
+        status="playable",
+    ),
 )
 
 # Not ready to ship yet. Listed after the released games in a dev copy.
@@ -97,15 +106,7 @@ IN_DEVELOPMENT = (
         entry="games.number_detective.entry:create_view",
         status="in development",
     ),
-    GameInfo(
-        game_id="twenty48",
-        title="2048",
-        tagline="Swipe to merge tiles: doubling or Fibonacci",
-        icon="2048",
-        accent="warm",
-        entry="games.twenty48.entry:create_view",
-        status="in development",
-    ),
+
     GameInfo(
         game_id="times_tables",
         title="Times Tables",

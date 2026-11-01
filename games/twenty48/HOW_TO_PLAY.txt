@@ -1,0 +1,20 @@
+Swipe to slide every tile. Two tiles that may merge become one tile worth their sum. Make the goal tile before the board fills up.
+
+## How to play
+- Swipe left, right, up or down. Every tile slides as far as it can that way.
+- Two touching tiles that may merge become one tile worth their sum. A tile merges once per swipe.
+- After every swipe a new small tile appears.
+- Reaching the goal is announced once; keep playing for a higher score.
+- The game ends when no swipe can change the board. Your game is saved if you leave.
+
+## Tiles
+- Doubling: equal tiles merge. From 2 you make 4, 8, 16 and on to the goal of 2048. From 3 or 5 the tiles are doubles of that number and the goal is 1024 times it.
+- Fibonacci: two 1s merge, and so do neighbouring Fibonacci numbers. 1 and 2 make 3, 2 and 3 make 5, 3 and 5 make 8. The goal is 2584.
+- A tile's colour shows how far along its sequence it is, so a colour means the same stage in every mode.
+
+## Settings
+- Board size: 3 × 3 to 6 × 6. Smaller boards are harder.
+- Tiles: Doubling or Fibonacci.
+- Starting number: 2, 3 or 5 (Doubling only).
+- Animate slides: tiles glide to their new places. Turn it off for instant moves.
+- Your best score is kept for each size, tile type and starting number.

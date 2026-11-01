@@ -10,7 +10,7 @@ Modules:
     paths   easing and motion paths: straight, arc, pulse
     clock   tracks for one frame clock: which views move, and where they are now
     folds   paper sheets turning over onto pieces: scatter chains, hinged
-            turns, tiny squares (Fold's animation, shared; 2048 uses it)
+            turns, tiny squares (Fold's animation, shared; Double Up uses it)
     fold_layer  ui adapter: a see-through FoldLayer that plays fold shows
             over a board on its own frame clock (Sudoku's unfold uses it)
 

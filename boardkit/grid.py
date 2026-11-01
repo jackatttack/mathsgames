@@ -17,7 +17,7 @@ gap styles cover every Maths Games board so far:
              inside it, half on each side. Gradient uses this; a gap of 0
              gives Sudoku's and KenKen's touching cells.
     between  Gaps run around and between the tiles and take board space,
-             so the board has a gap-wide edge all round. 2048 uses this.
+             so the board has a gap-wide edge all round. Double Up uses this.
 """
 
 
