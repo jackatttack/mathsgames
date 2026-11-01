@@ -47,6 +47,7 @@ from style import theme
 from tilegame.cell_picker import CellPicker
 from tilegame.fill_grid import FillGrid
 from tilegame.number_tray import NumberTray
+from boardkit.fold_layer import FoldLayer
 from tilegame.flourish_overlay import FlourishOverlay
 from tilegame.records import RecordBook, record_key
 from tilegame.records_panel import RecordsPanel
@@ -412,6 +413,9 @@ class SudokuScreen(ui.View):
         # The solve celebration: over the board, touches pass through.
         self.flourish = FlourishOverlay()
 
+        # A new deal unfolds over the board as paper; a tap skips it.
+        self.builder = FoldLayer()
+
         self.tray = NumberTray(self.tray_tapped, on_notes=self.tray_notes_tapped)
 
         self.undo_button = make_button("Undo", self.undo_tapped)
@@ -429,6 +433,7 @@ class SudokuScreen(ui.View):
         for view in (
             self.status_label,
             self.board_view,
+            self.builder,            # the unfolding deal, over the board
             self.flourish,           # over the board, under the tray and picker
             self.tray,
             self.undo_button,
@@ -477,6 +482,10 @@ class SudokuScreen(ui.View):
             0, board_top, width, max(0, buttons_y - 12 - tray_space - board_top))
 
         self.flourish.frame = self.board_view.frame
+        self.builder.frame = self.board_view.frame
+        # Layout also runs when nothing moved; only a moved board ends an unfold.
+        if self.builder.show is not None and self.builder.show.rect != self.board_view.board_rect():
+            self.builder.finish()
 
         grid_left, grid_top, grid_side = self.board_view.board_rect()
         self.tray.frame = (
@@ -499,10 +508,21 @@ class SudokuScreen(ui.View):
         return self.solve_seconds is not None
 
     def new_puzzle(self):
-        """Deal a puzzle for the current settings, show it and save it."""
+        """Deal a puzzle for the current settings, show it, save it and
+        unfold it from a random corner."""
         puzzle = rules.generate_puzzle(self.settings["size"], self.settings["difficulty"])
         self.show_puzzle(puzzle, self.fresh_grid(puzzle), seconds_played=0)
         self.save_game()
+        self.start_build()
+
+    def start_build(self):
+        """Unfold the board just dealt (board_build.py on boardkit). A preview,
+        or a board not laid out yet, simply appears."""
+        if self.preview:
+            return
+        show = self.board_view.build_show(time.time())
+        if show is not None:
+            self.builder.play(show)
 
     def fresh_grid(self, puzzle):
         """An empty FillGrid for puzzle: its givens, plus boxes as units."""
@@ -526,6 +546,7 @@ class SudokuScreen(ui.View):
         self.solve_seconds = None
 
         self.stop_flourish()
+        self.builder.finish()
         self.picker.hide_picker()
         self.picker.set_values(self.grid.allowed_values)
         self.board_view.load_puzzle(self.puzzle, rules.BOX_SHAPES[size])

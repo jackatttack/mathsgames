@@ -13,6 +13,7 @@ and 2 x 2 on 4 x 4, each value always in the same spot.
 import ui
 
 from style import theme
+from games.sudoku import board_build
 from tilegame.widgets import draw_centred_text
 
 
@@ -43,7 +44,7 @@ class SudokuBoardView(ui.View):
     VALUE_FONT_RATIO = 0.6
     NOTE_FONT_RATIO = 0.26
     armed_value = None   # the tray's armed number; refresh_marks sets it
-    values_hidden = False   # True while the solve celebration draws the numbers
+    values_hidden = False   # True while the solve celebration or the new-deal build draws the numbers
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -263,3 +264,97 @@ class SudokuBoardView(ui.View):
                     top + row * cell_size + mini_row * mini_height,
                     mini_width, mini_height,
                 )
+
+    # --- unfolding on a new deal -----------------------------------------------
+
+    def build_show(self, start, rng=None):
+        """A BuildShow unfolding the current puzzle from a random corner at
+        start, for a boardkit FoldLayer over this board; None before layout."""
+        left, top, side = self.board_rect()
+        if not self.size or side <= 0:
+            return None
+        givens = {cell: self.values[cell[0]][cell[1]] for cell in self.givens}
+        return BuildShow(self, board_build.plan_build(self.size, (left, top, side), givens, start, rng))
+
+    def draw_build(self, build, now):
+        """Draw build (board_build.Build) part way, inside the overlay's draw().
+
+        Cells whose paper has not landed are covered in this view's
+        background, so the board shows only where paper has settled; turning
+        squares are drawn as plain paper in the cell colour. Once the paper
+        has all landed the givens pop in (the board's own numbers stay
+        hidden until the build ends).
+        """
+        ui.set_color(self.background_color)
+        for cell in board_build.unlanded(build, now):
+            ui.Path.rect(*self.cell_frame(cell)).fill()
+        red, green, blue = _rgb(CELL_COLOR)
+        for cell, points, shade in board_build.sheets(build, now):
+            ui.set_color((red * shade, green * shade, blue * shade))
+            sheet = ui.Path()
+            sheet.move_to(*points[0])
+            for point in points[1:]:
+                sheet.line_to(*point)
+            sheet.close()
+            sheet.fill()
+        cell_size = build.rect[2] / build.size
+        font = ("AvenirNext-Bold", cell_size * self.VALUE_FONT_RATIO)
+        for cell, value, scale in board_build.numbers(build, now):
+            x, y, width, height = self.cell_frame(cell)
+            with ui.GState():
+                # Move to the cell's centre, then scale, so the number pops about its middle.
+                ui.concat_ctm(ui.Transform.translation(x + width / 2, y + height / 2))
+                ui.concat_ctm(ui.Transform.scale(scale, scale))
+                draw_centred_text(str(value), font, GIVEN_COLOR,
+                                  -cell_size / 2, -cell_size / 2, cell_size, cell_size)
+
+
+class BuildShow:
+    """The board building itself on a new deal, as a show for boardkit's
+    FoldLayer. The board hides its own numbers until the swell.
+
+    For the swell the finished board is drawn once into an image, which the
+    overlay draws scaled about the board's centre. The board view itself is
+    never transformed: the screen re-lays it out often, and a frame set on
+    a transformed view is unreliable.
+    """
+
+    def __init__(self, board_view, build):
+        self.board_view = board_view
+        self.build = build
+        self.rect = build.rect      # the screen drops the show if the board moves
+        self.snapshot = None        # the finished board, made when the swell starts
+        board_view.values_hidden = True
+        board_view.set_needs_display()
+
+    def done(self, now):
+        return board_build.done(self.build, now)
+
+    def draw(self, now):
+        if now < self.build.swell_start:
+            self.board_view.draw_build(self.build, now)
+            return
+        board = self.board_view
+        if self.snapshot is None:
+            board.values_hidden = False
+            board.set_needs_display()
+            with ui.ImageContext(board.width, board.height) as context:
+                board.draw()
+                self.snapshot = context.get_image()
+        scale = board_build.board_scale(self.build, now)
+        left, top, side = self.build.rect
+        centre_x, centre_y = left + side / 2, top + side / 2
+        self.snapshot.draw(centre_x - centre_x * scale, centre_y - centre_y * scale,
+                           board.width * scale, board.height * scale)
+
+    def finished(self):
+        """Ended or skipped: the board shows its own numbers again."""
+        self.board_view.values_hidden = False
+        self.board_view.set_needs_display()
+
+
+def _rgb(colour):
+    """(red, green, blue) from a theme colour, as a hex string or a tuple."""
+    if isinstance(colour, (tuple, list)):
+        return tuple(colour[:3])
+    return tuple(ui.parse_color(colour)[:3])

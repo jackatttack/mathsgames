@@ -3,6 +3,12 @@ Fold motion: when each triangle of a flood changes, and what shape is drawn
 over the board while it does. Pure Python: a board view asks for shapes
 each frame and draws them; smokes/fold_smoke.py checks the geometry.
 
+The paper itself (scatter chains, hinged turns, sheets growing from their
+centre) lives in boardkit/folds.py, shared with the other games; this
+module keeps what is Fold's own: its styles and feel, triangle hinges, the
+winning finale and the hexagon card. smokes/fold_motion_parity_smoke.py
+proved the move onto boardkit changed nothing on screen (2026-11-01).
+
 Styles:
     scatter  KAMI-style chain folding. Each region gets a random spanning
              tree; a triangle folds over from its tree parent once the
@@ -22,19 +28,12 @@ plan() plays a move forwards; plan_undo() plays it backwards, last fold
 first, each sheet lifting off and turning back onto the triangle it came
 from with the old colour underneath. Scatter seeds its randomness from the
 move, so undo replays exactly the same tree.
-
-The turning sheet is a flat (orthographic) view of a triangle rotating
-about its hinge: its far corner slides along the line through the hinge's
-midpoint, from the mirror image lying over the parent (s = -1) to its own
-place (s = 1), with s = -cos(angle). On the triangle lattice the mirror
-image is exactly the parent triangle.
 """
 
-import heapq
 import math
 import random
 
-from boardkit import paths
+from boardkit import folds, paths
 
 
 STYLES = ("scatter", "fold", "ripple", "instant")
@@ -49,11 +48,13 @@ MAX_SPREAD_SECONDS = 1.2        # fold and ripple: furthest triangle starts by t
 SCATTER_HANDOFF = (0.25, 1.0)   # scatter: a child starts when its parent is this far through
 SCATTER_SPREAD_SECONDS = 1.6    # scatter: big regions are sped up to start within this...
 SCATTER_MIN_SPEED = 0.45        # ...but never faster than this share of normal speed
-EDGE_ON_SHADE = 0.78            # brightness of a sheet seen edge-on (1 is flat on)
+
+EDGE_ON_SHADE = folds.EDGE_ON_SHADE   # boardkit's edge-on brightness, named here for older callers
 
 
-class Fold:
-    """One triangle's change.
+class Fold(folds.Fold):
+    """One triangle's change: a boardkit Fold whose piece is a triangle cell,
+    plus Fold's style.
 
     colour        what the board shows under this triangle once the fold
                   has done its job (landed, or begun lifting off for undo)
@@ -63,14 +64,16 @@ class Fold:
 
     def __init__(self, cell, parent, colour, start, seconds, style,
                  sheet_colour=None, reverse=False):
-        self.cell = cell
-        self.parent = parent
-        self.colour = colour
-        self.start = start
-        self.seconds = seconds
+        super().__init__(cell, parent, start, seconds, colour, sheet_colour, reverse)
         self.style = style
-        self.sheet_colour = colour if sheet_colour is None else sheet_colour
-        self.reverse = reverse
+
+    @property
+    def cell(self):
+        return self.piece
+
+    @cell.setter
+    def cell(self, value):
+        self.piece = value
 
 
 # --- timing ------------------------------------------------------------------
@@ -96,50 +99,19 @@ def _schedule(move, style, grid):
 def _scatter_tree(move, grid):
     """(offsets, parents, speed) for a random spanning tree of the move's
     region, grown from the tapped cell. Seeded from the move, so the same
-    move always grows the same tree (see _scatter_from)."""
+    move always grows the same tree."""
     rng = random.Random(hash((move.cell, len(move.cells), move.old_colour, move.new_colour)))
     return _scatter_from(grid, set(move.cells), [move.cell], rng)
 
 
 def _scatter_from(grid, region, starts, rng):
-    """(offsets, parents, speed): a random spanning forest of region grown
-    from the start cells, the heart of the scatter style.
-
-    Grown like Dijkstra's algorithm with random edge weights: a child's
-    start is its parent's start plus a random share of a fold. Start cells
-    have no parent (their paper grows in place).
-
-    A big region plays faster by scaling the whole animation, start times
-    and fold length together, so every child still waits until its parent
-    is part way over: the chain never breaks, it just runs in fast forward.
-    speed (at most 1, at least SCATTER_MIN_SPEED) is that scale.
-    """
-    offsets = {cell: 0.0 for cell in starts}
-    parents = {cell: None for cell in starts}
-    settled = set()
-    queue = [(0.0, order, cell) for order, cell in enumerate(starts)]
-    heapq.heapify(queue)
-    pushes = len(queue)
-    while queue:
-        offset, _, cell = heapq.heappop(queue)
-        if cell in settled:
-            continue
-        settled.add(cell)
-        for other in grid.neighbours(cell):
-            if other not in region or other in settled:
-                continue
-            candidate = offset + FOLD_SECONDS * rng.uniform(*SCATTER_HANDOFF)
-            if candidate < offsets.get(other, float("inf")):
-                offsets[other] = candidate
-                parents[other] = cell
-                heapq.heappush(queue, (candidate, pushes, other))
-                pushes += 1
-    latest = max(offsets.values())
-    speed = 1.0
-    if latest > SCATTER_SPREAD_SECONDS:
-        speed = max(SCATTER_MIN_SPEED, SCATTER_SPREAD_SECONDS / latest)
-    offsets = {cell: offset * speed for cell, offset in offsets.items()}
-    return offsets, parents, speed
+    """(offsets, parents, speed): boardkit's scatter forest over the triangle
+    grid with Fold's feel. speed (at most 1, at least SCATTER_MIN_SPEED) is
+    how much a big region was sped up."""
+    offsets, parents, seconds = folds.scatter(
+        grid.neighbours, region, starts, rng, fold_seconds=FOLD_SECONDS, handoff=SCATTER_HANDOFF,
+        spread_seconds=SCATTER_SPREAD_SECONDS, min_speed=SCATTER_MIN_SPEED)
+    return offsets, parents, seconds / FOLD_SECONDS
 
 
 def plan(move, now, style="scatter", grid=None):
@@ -220,7 +192,7 @@ def card_unfold(centre, radius, elapsed):
         t = (elapsed - k * CARD_TRIANGLE_GAP) / CARD_TRIANGLE_SECONDS
         if t <= 0:
             break
-        eased = smoothstep(t)
+        eased = folds.smoothstep(t)
         hinge = corners[k]
         apex = corners[(k + 1) % 6]
         if k == 0:
@@ -228,10 +200,8 @@ def card_unfold(centre, radius, elapsed):
                       for x, y in (centre, hinge, apex)]
             triangles.append((points, 1.0))
             continue
-        turn = -math.cos(math.pi * eased)
-        foot = ((centre[0] + hinge[0]) / 2, (centre[1] + hinge[1]) / 2)
-        tip = (foot[0] + turn * (apex[0] - foot[0]), foot[1] + turn * (apex[1] - foot[1]))
-        triangles.append(([centre, hinge, tip], EDGE_ON_SHADE + (1 - EDGE_ON_SHADE) * abs(turn)))
+        s = folds.turn_amount(eased)
+        triangles.append((folds.turn([centre, hinge, apex], (centre, hinge), s), folds.shade_for(s)))
     text_start = 5 * CARD_TRIANGLE_GAP + CARD_TRIANGLE_SECONDS
     text_alpha = min(1.0, max(0.0, (elapsed - text_start) / CARD_TEXT_SECONDS))
     return triangles, text_alpha
@@ -239,13 +209,11 @@ def card_unfold(centre, radius, elapsed):
 
 def progress(fold, now):
     """0 before the fold starts, 1 once it has finished."""
-    if fold.seconds <= 0:
-        return 1.0 if now >= fold.start else 0.0
-    return min(1.0, max(0.0, (now - fold.start) / fold.seconds))
+    return folds.progress(fold, now)
 
 
 def done(fold, now):
-    return now >= fold.start + fold.seconds
+    return folds.done(fold, now)
 
 
 def shows_new_colour(fold, now):
@@ -257,21 +225,20 @@ def shows_new_colour(fold, now):
     rounding error.
     """
     if fold.style in ("scatter", "fold") and not fold.reverse:
-        return done(fold, now)
+        return folds.done(fold, now)
     return now >= fold.start
 
 
 # --- shapes ------------------------------------------------------------------
 
-def smoothstep(t):
-    t = min(1.0, max(0.0, t))
-    return t * t * (3 - 2 * t)
+smoothstep = folds.smoothstep
 
 
 def shape(grid, fold, now):
     """(points, shade) to draw in fold.sheet_colour over the board at now, or None.
 
-    shade multiplies the colour's brightness: 1 for flat paper.
+    shade multiplies the colour's brightness: 1 for flat paper. A hinged
+    sheet's points are [hinge corner, hinge corner, tip].
     """
     if fold.style == "instant" or now < fold.start:
         return None
@@ -279,18 +246,17 @@ def shape(grid, fold, now):
     if t >= 1.0:
         return None
     drawn = grid.corners(fold.cell)
-    centre = _centroid(drawn)
     if fold.style == "ripple":
-        return _scaled(drawn, centre, paths.pulse_scale(now - fold.start, fold.seconds)), 1.0
-    eased = smoothstep(1.0 - t if fold.reverse else t)
+        return _scaled(drawn, _centroid(drawn), paths.pulse_scale(now - fold.start, fold.seconds)), 1.0
     if fold.parent is None:
-        return _scaled(drawn, centre, eased), 1.0
-    hinge, apex = hinge_and_apex(grid, fold.cell, fold.parent)
-    turn = -math.cos(math.pi * eased)
-    foot = ((hinge[0][0] + hinge[1][0]) / 2, (hinge[0][1] + hinge[1][1]) / 2)
-    tip = (foot[0] + turn * (apex[0] - foot[0]), foot[1] + turn * (apex[1] - foot[1]))
-    shade = EDGE_ON_SHADE + (1 - EDGE_ON_SHADE) * abs(turn)
-    return [hinge[0], hinge[1], tip], shade
+        shaped = folds.shape(fold, drawn, None, now)
+    else:
+        hinge, apex = hinge_and_apex(grid, fold.cell, fold.parent)
+        shaped = folds.shape(fold, [hinge[0], hinge[1], apex], hinge, now)
+    if shaped is None:
+        return None
+    points, shade, _ = shaped
+    return points, shade
 
 
 def hinge_and_apex(grid, cell, parent):
