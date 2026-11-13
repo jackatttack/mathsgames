@@ -135,6 +135,27 @@ def theme_css(game_id, tokens=THEME_TOKENS):
     return ':root { %s }\n' % ' '.join(lines), count
 
 
+def ui_colour(value):
+    """A theme colour for a ui view: '#RRGGBB' (alpha cut), or the value as given."""
+    if isinstance(value, str) and value.startswith('#') and len(value) > 7:
+        return value[:7]
+    return value
+
+
+def header_colours(game_id):
+    """The game's own background, button, text and tile colours, for the
+    full-screen header (editorkit's Window.set_full_look)."""
+    from style import theme
+    theme.set_game(game_id)
+    try:
+        return {'background': ui_colour(theme.color('background')),
+                'button': ui_colour(theme.color('button')),
+                'text': ui_colour(theme.color('text')),
+                'accent': ui_colour(theme.color('tile'))}
+    finally:
+        theme.set_game(None)
+
+
 def load_help_card(info):
     try:
         from gamecore import how_to_play
@@ -183,6 +204,7 @@ class WebGameHost:
         game.celebration_count = count
         self.page = web_tiles.Cards(self.window, on_go=self.tapped,
                                     extra_css=css + BASE_CSS + getattr(game, 'CSS', ''))
+        self.match_header(info.game_id)
         self.page.every(self.keep_importable)
         self.window.add_page(info.title, self.page)
         self.window.add_button(SETTINGS_ICON, self.settings_tapped, name='settings')
@@ -190,6 +212,17 @@ class WebGameHost:
         if self.help_card is not None:
             self.window.add_button(HELP_ICON, self.help_tapped, name='help')
         self.draw()
+
+    def match_header(self, game_id):
+        """Full screen in the game's own colours, header included, so the
+        screen is one surface. Older editorkit has no set_full_look: skipped."""
+        set_full_look = getattr(self.window, 'set_full_look', None)
+        if set_full_look is None:
+            return
+        try:
+            set_full_look(**header_colours(game_id))
+        except Exception:
+            traceback.print_exc()
 
     def keep_importable(self, now=None):
         use_maths_games()

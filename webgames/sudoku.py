@@ -480,16 +480,8 @@ class Game:
                         ink = 'given' if given else 'mine'
                     inner = '<span class="sd-v %s%s">%d</span>' % (ink, ' g' if given else '', value)
                 else:
-                    noted = grid.notes_at(cell)
-                    inner = ''
-                    if noted:
-                        marks = []
-                        for note in range(1, size + 1):
-                            if note in noted:
-                                marks.append('<span%s>%d</span>' % (' class="m"' if note == match else '', note))
-                            else:
-                                marks.append('<span></span>')
-                        inner = '<div class="sd-notes">%s</div>' % ''.join(marks)
+                    inner = ''.join(self.note_html(note, box_rows, box_cols, note == match)
+                                    for note in sorted(grid.notes_at(cell)))
                 cells.append('<div class="%s" style="%s" data-go="cell/%d/%d">%s</div>'
                              % (' '.join(name for name in classes if name), style, row, col, inner))
 
@@ -514,6 +506,15 @@ class Game:
                 % (status, ' bld' if building else '', wrap_style, ' bld' if building else '',
                    board_style, ''.join(cells), lower,
                    '' if undo_on else ' off', ' data-go="undo"' if undo_on else ''))
+
+    def note_html(self, note, box_rows, box_cols, matched):
+        """One note at its fixed place in the cell's box-shaped mini grid
+        (board_view: number n at divmod(n - 1, box_cols)), placed by
+        percentages so other notes can never move it."""
+        row, col = divmod(note - 1, box_cols)
+        return ('<span class="sd-note%s" style="left:%.3f%%;top:%.3f%%;width:%.3f%%;height:%.3f%%">%d</span>'
+                % (' m' if matched else '', 100.0 * col / box_cols, 100.0 * row / box_rows,
+                   100.0 / box_cols, 100.0 / box_rows, note))
 
     def build_timing(self, corner, size, givens):
         """{cell: (fold delay, pop delay)} and 'swell': squares unfold out
@@ -685,11 +686,10 @@ CSS = """
 .sd-v.mine { color: var(--mg-player_number); }
 .sd-v.done, .sd-v.ok { color: var(--mg-success); }
 .sd-v.bad { color: var(--mg-mistake); }
-.sd-notes { position: absolute; inset: 0; display: grid;
-    grid-template-columns: repeat(var(--bc), 1fr); grid-template-rows: repeat(var(--br), 1fr); }
-.sd-notes span { display: flex; align-items: center; justify-content: center;
-    font-size: max(8px, calc(var(--bw) / var(--n) * 0.26)); font-weight: 500; color: var(--mg-note); }
-.sd-notes span.m { color: var(--mg-sky); }
+.sd-note { position: absolute; display: flex; align-items: center; justify-content: center;
+    line-height: 1; font-size: max(8px, calc(var(--bw) / var(--n) * 0.26)); font-weight: 500;
+    color: var(--mg-note); }
+.sd-note.m { color: var(--mg-sky); }
 
 .sd-cell.cel::before { content: ''; position: absolute; inset: 1.5px; border-radius: 4px;
     background: var(--cc); opacity: 0.55; }
