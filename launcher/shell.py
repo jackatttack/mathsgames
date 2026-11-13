@@ -29,6 +29,7 @@ from style import theme
 
 HOME_TITLE = "Maths Games"
 HOME_SUBTITLE = "Pick a game"
+WEB_OPEN_DELAY = 0.6    # seconds: lets the app finish closing before the web game opens
 
 
 class AppShell(ui.View):
@@ -113,7 +114,8 @@ class AppShell(ui.View):
     def open_appearance(self):
         """Show the Appearance screen like a game. Back leaves without saving."""
         tactile.haptic_tap()
-        self.show_game(AppearanceView(self.games, save=theme.save_choices), "Appearance")
+        native = [game for game in self.games if not game.web_game]   # web cards use their native colours
+        self.show_game(AppearanceView(native, save=theme.save_choices), "Appearance")
 
     def apply_theme(self):
         """Repaint the launcher in the current theme. Games repaint when opened."""
@@ -130,6 +132,9 @@ class AppShell(ui.View):
 
     def open_game(self, game):
         """Build the chosen game's view and show it in place of the home screen."""
+        if game.web_game:
+            self.open_web_game(game)
+            return
         tactile.haptic_tap()
         theme.set_game(game.game_id)
         refresh_game_modules()
@@ -149,6 +154,22 @@ class AppShell(ui.View):
             help_card=how_to_play.load_card(game),
             accent=theme.color(game.accent),
         )
+
+    def open_web_game(self, game):
+        """A web version opens in its own full-screen window (webgames).
+        Pythonista shows one full-screen view at a time, so the app closes
+        first; running Maths Games again brings the menu back."""
+        tactile.haptic_tap()
+        self.close()
+
+        def open_it():
+            try:
+                import webgames
+                webgames.open_game(game.web_game)
+            except Exception:
+                traceback.print_exc()
+
+        ui.delay(open_it, WEB_OPEN_DELAY)
 
     def show_game(self, view, title, help_card=None, accent=None):
         """Place a built game view under the header.

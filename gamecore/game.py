@@ -40,6 +40,7 @@ class GameInfo:
     accent: str       # a style token name, resolved by style/, never a hex
     entry: str        # "package.module:function" returning the game's view
     status: str = "in development"
+    web_game: str = ""   # a web version's card: the game it opens with webgames; "" for native
 
     def entry_parts(self):
         """Return (module_name, function_name) from the entry string."""

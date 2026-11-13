@@ -11,6 +11,7 @@ GAMES is what this copy offers; the launcher, Appearance and the smokes
 all read it.
 """
 
+import importlib.util
 import os
 
 from gamecore.game import GameInfo
@@ -119,9 +120,46 @@ IN_DEVELOPMENT = (
 )
 
 
+# Web versions (webgames/, on the editorkit web frame work), each listed
+# right after its native game. Offered only when editorkit is installed
+# (Toolbox for Pythonista). They open in their own full-screen window and
+# share the native game's settings, saved game and best times.
+WEB_VERSIONS = (
+    GameInfo(
+        game_id="sudoku_web",
+        title="Sudoku (web)",
+        tagline="The web version: same puzzle, same best times",
+        icon="9",
+        accent="violet",
+        entry="webgames:open_game",
+        status="playable",
+        web_game="sudoku",
+    ),
+)
+
+
 def is_dev_copy():
     """True when this copy has the DEV_BUILD marker at its root."""
     return os.path.exists(os.path.join(PROJECT_DIR, DEV_MARKER))
 
 
+def editorkit_installed():
+    """True when the editorkit package is importable (found, not imported)."""
+    try:
+        return importlib.util.find_spec("editorkit") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def with_web_versions(games):
+    """games with each web version placed right after its native game."""
+    listed = []
+    for game in games:
+        listed.append(game)
+        listed.extend(web for web in WEB_VERSIONS if web.web_game == game.game_id)
+    return tuple(listed)
+
+
 GAMES = (RELEASED + IN_DEVELOPMENT) if is_dev_copy() else RELEASED
+if editorkit_installed():
+    GAMES = with_web_versions(GAMES)

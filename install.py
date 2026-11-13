@@ -15,6 +15,7 @@ Options (for testing):
 
 import argparse
 import io
+import json
 import os
 import shutil
 import sys
@@ -34,6 +35,23 @@ RETIRED_FILES = ("maths_games.py",)
 
 # Files the app writes while you play. Updates never replace or remove them.
 PLAYER_FILES = ("settings.json", "records.json", "saved_game.json")
+
+# Web versions of games (the webgames folder). They need the editorkit
+# package from Toolbox for Pythonista (github.com/jackatttack/editorkit).
+# With it installed they show in the Maths Games menu, and each also gets a
+# card in Toolbox's Games, written here.
+TOOLBOX_GAMES_FOLDER = os.path.join(os.path.expanduser("~/Documents"), "Toolbox", "games")
+WEB_GAMES = (
+    {
+        "file": "maths_games_sudoku.json",
+        "game_id": "sudoku",
+        "name": "Sudoku (web)",
+        "emoji": "🔢",
+        "about": ("Maths Games' Sudoku on the web frame work: the same game as the "
+                  "native one (settings, the puzzle in progress and best times are "
+                  "shared), opened full screen."),
+    },
+)
 
 
 def default_target():
@@ -136,6 +154,39 @@ def open_launcher(path):
         pass
 
 
+def editorkit_installed():
+    """True when the editorkit package (Toolbox for Pythonista) is importable."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("editorkit") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def add_toolbox_games(target):
+    """Write a Toolbox card for each web game. Returns the names written;
+    none when editorkit is not installed."""
+    if not editorkit_installed():
+        return []
+    os.makedirs(TOOLBOX_GAMES_FOLDER, exist_ok=True)
+    written = []
+    for game in WEB_GAMES:
+        card = {
+            "name": game["name"],
+            "emoji": game["emoji"],
+            "what": "Maths Games on the web",
+            "about": game["about"],
+            "folder": target,
+            "module": "webgames",
+            "function": "open_game",
+            "args": [game["game_id"]],
+        }
+        with open(os.path.join(TOOLBOX_GAMES_FOLDER, game["file"]), "w", encoding="utf-8") as handle:
+            json.dump(card, handle, indent=2, ensure_ascii=False)
+        written.append(game["name"])
+    return written
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Install or update Maths Games")
     parser.add_argument("--from-folder")
@@ -158,6 +209,7 @@ def main(argv=None):
         shutil.rmtree(work_dir, ignore_errors=True)
 
     launcher = os.path.join(target, LAUNCHER)
+    web_games = add_toolbox_games(target)
 
     print("")
     print("Installed Maths Games ({}) to:".format(version))
@@ -168,6 +220,12 @@ def main(argv=None):
     print("Play: run {}. Run the installer again any time to update.".format(
         LAUNCHER
     ))
+    if web_games:
+        print("Toolbox found: added {} to the Maths Games menu and Toolbox's Games.".format(
+            ", ".join(web_games)
+        ))
+    else:
+        print("Web versions (optional): install Toolbox for Pythonista, then run this again.")
 
     if not args.no_open:
         open_launcher(launcher)
