@@ -31,6 +31,8 @@ import os
 import sys
 import traceback
 
+import ui
+
 import editorkit as ek
 from editorkit.web import tiles as web_tiles
 
@@ -43,6 +45,18 @@ WINDOW_KEY = 'webgames-%s'
 HELP_KEY = 'webgames-help-%s'
 TITLE_SUFFIX = ' (web)'
 CELEBRATION_COLOURS = 9         # one per number on the biggest board
+CLOSE_DELAY = 0.4               # seconds after leaving full screen before the window closes
+LEAVE_DELAY = 0.9               # seconds before on_leave (the menu comes back)
+
+# The game's own header (full screen): the native shell's round buttons.
+BACK_ICON = ('<svg viewBox="0 0 24 24" width="26" height="26"><path d="M15 5 L8 12 L15 19" '
+             'fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" '
+             'stroke-linejoin="round"/></svg>')
+GEAR_ICON = ('<svg viewBox="0 0 24 24" width="26" height="26">'
+             '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3.4" '
+             'stroke-dasharray="3.5 3.57"/><circle cx="12" cy="12" r="7" fill="currentColor"/>'
+             '<circle cx="12" cy="12" r="3" fill="var(--mg-button)"/></svg>')
+HELP_ICON_TEXT = '?'
 SETTINGS_ICON = '⚙️'
 HELP_ICON = '❓'
 
@@ -72,6 +86,19 @@ html, body { background: var(--mg-background) !important; color: var(--mg-text);
 .mg-caption { color: var(--mg-muted); font-size: 15px; margin: 18px 0 8px 0; }
 .mg-note { color: var(--mg-muted); font-size: 13px; margin: 6px 0 0 0; min-height: 18px; }
 .mg-title { font-size: 24px; font-weight: 700; margin: 6px 0 2px 0; }
+.mg-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    margin: 0 4px 14px 4px; }
+.mg-head .l { justify-self: start; }
+.mg-head .r { justify-self: end; display: flex; gap: 12px; }
+.mg-round { width: 50px; height: 50px; border-radius: 25px; background: var(--mg-button);
+    color: var(--mg-text); display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 700; cursor: pointer; }
+.mg-head .t { text-align: center; font-size: 22px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--mg-text); }
+.mg-head .s { text-align: center; font-size: 15px; color: var(--mg-muted); margin-top: 2px; }
+.mg-help { padding: 4px 8px 16px 8px; line-height: 1.45; }
+.mg-help h3 { margin: 18px 0 6px 0; }
+.mg-help ul { padding-left: 22px; }
 """
 
 
@@ -195,16 +222,19 @@ def help_html(card):
 class WebGameHost:
     """One web game in an editorkit window: the page, ⚙️ and ❓."""
 
-    def __init__(self, game, info):
+    def __init__(self, game, info, full_screen=False, on_leave=None):
         self.game = game
         self.info = info
+        self.on_leave = on_leave
+        self.showing_help = False        # the how-to-play text in the page (own header)
+        self.own_header = False
         self.window = ek.Window(info.title + TITLE_SUFFIX, emoji=WINDOW_EMOJI,
                                 key=WINDOW_KEY % info.game_id)
         css, count = theme_css(info.game_id, getattr(game, 'THEME_TOKENS', THEME_TOKENS))
         game.celebration_count = count
         self.page = web_tiles.Cards(self.window, on_go=self.tapped,
                                     extra_css=css + BASE_CSS + getattr(game, 'CSS', ''))
-        self.match_header(info.game_id)
+        self.own_header = self.match_header(info.game_id, own_header=full_screen)
         self.page.every(self.keep_importable)
         self.window.add_page(info.title, self.page)
         self.window.add_button(SETTINGS_ICON, self.settings_tapped, name='settings')
@@ -213,27 +243,45 @@ class WebGameHost:
             self.window.add_button(HELP_ICON, self.help_tapped, name='help')
         self.draw()
 
-    def match_header(self, game_id):
-        """Full screen in the game's own colours, header included, so the
-        screen is one surface. Older editorkit has no set_full_look: skipped."""
+    def match_header(self, game_id, own_header):
+        """Full screen in the game's own colours, so the screen is one
+        surface. With own_header the window's header goes and the page draws
+        the game's own. True when it does; older editorkit keeps its header
+        (no header option) or its colours (no set_full_look)."""
         set_full_look = getattr(self.window, 'set_full_look', None)
         if set_full_look is None:
-            return
+            return False
+        colours = header_colours(game_id)
+        if own_header:
+            try:
+                set_full_look(header=False, **colours)
+                return True
+            except TypeError:
+                pass                     # editorkit before the header option
         try:
-            set_full_look(**header_colours(game_id))
+            set_full_look(**colours)
         except Exception:
             traceback.print_exc()
+        return False
 
     def keep_importable(self, now=None):
         use_maths_games()
 
     def draw(self):
-        self.page.set_html('<div class="mg-page">%s</div>' % self.game.html())
+        if self.own_header:
+            body = self.header_html() + (self.help_page() if self.showing_help else self.game.html())
+            self.page.set_html('<div class="mg-page mg-full">%s</div>' % body)
+        else:
+            self.page.set_html('<div class="mg-page">%s</div>' % self.game.html())
         title = self.info.title + TITLE_SUFFIX
         subtitle = self.game.subtitle()
         self.window.set_title('%s · %s' % (title, subtitle) if subtitle else title)
 
     def tapped(self, payload):
+        if payload.startswith('hdr/'):
+            self.header_tapped(payload[4:])
+            self.draw()
+            return
         try:
             self.game.go(payload)
         except Exception:
@@ -247,3 +295,53 @@ class WebGameHost:
     def help_tapped(self, *sender):
         ek.show(help_html(self.help_card), title='How to play %s' % self.info.title,
                 key=HELP_KEY % self.info.game_id)
+
+    # --- the game's own header (full screen) ----------------------------------
+
+    def header_html(self):
+        """The native shell's header: round back chevron, the title and
+        subtitle centred, round ? and gear on the right."""
+        subtitle = 'How to play' if self.showing_help else self.game.subtitle()
+        right = []
+        if self.help_card is not None:
+            right.append('<div class="mg-round" data-go="hdr/help">%s</div>' % HELP_ICON_TEXT)
+        right.append('<div class="mg-round" data-go="hdr/settings">%s</div>' % GEAR_ICON)
+        return ('<div class="mg-head"><div class="l"><div class="mg-round" data-go="hdr/back">%s</div></div>'
+                '<div><div class="t">%s</div><div class="s">%s</div></div>'
+                '<div class="r">%s</div></div>'
+                % (BACK_ICON, html.escape(self.info.title), html.escape(subtitle), ''.join(right)))
+
+    def help_page(self):
+        return ('<div class="mg-help">%s</div>'
+                '<div class="mg-button" data-go="hdr/help">Back to the game</div>'
+                % help_html(self.help_card))
+
+    def header_tapped(self, what):
+        """Back steps out as the native shell does: help, then Settings or
+        Best times, then the game itself."""
+        if what == 'back':
+            if self.showing_help:
+                self.showing_help = False
+            elif getattr(self.game, 'page', 'game') != 'game':
+                self.game.toggle_settings()
+            else:
+                self.leave()
+        elif what == 'help':
+            self.showing_help = not self.showing_help
+        elif what == 'settings':
+            self.showing_help = False
+            self.game.toggle_settings()
+
+    def leave(self):
+        """Close the game: out of full screen, close the window, then
+        on_leave (the Maths Games menu comes back)."""
+        window = self.window
+        try:
+            window.leave_full()
+        except Exception:
+            traceback.print_exc()
+        close = getattr(window, 'close', None)
+        if callable(close):
+            ui.delay(close, CLOSE_DELAY)
+        if self.on_leave is not None:
+            ui.delay(self.on_leave, LEAVE_DELAY)

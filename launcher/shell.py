@@ -32,6 +32,15 @@ HOME_SUBTITLE = "Pick a game"
 WEB_OPEN_DELAY = 0.6    # seconds: lets the app finish closing before the web game opens
 
 
+def reopen_menu():
+    """Back from a web game: the Maths Games home screen again."""
+    try:
+        import launch_mathsgames
+        launch_mathsgames.main()
+    except Exception:
+        traceback.print_exc()
+
+
 class AppShell(ui.View):
     """Home screen or current game, under one shared header."""
 
@@ -165,7 +174,7 @@ class AppShell(ui.View):
         def open_it():
             try:
                 import webgames
-                webgames.open_game(game.web_game)
+                webgames.open_game(game.web_game, on_leave=reopen_menu)
             except Exception:
                 traceback.print_exc()
 

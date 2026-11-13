@@ -746,6 +746,8 @@ CSS = """
     color: var(--mg-player_number); }
 
 .sd-buttons { display: flex; gap: 12px; justify-content: center; margin-top: 16px; }
+.mg-full .sd-screen { display: flex; flex-direction: column; min-height: calc(100vh - 120px); }
+.mg-full .sd-buttons { margin-top: auto; padding-top: 16px; }
 .sd-buttons .mg-button { width: min(160px, calc((var(--bw) - 12px) / 2)); }
 
 .sd-settings { max-width: 320px; margin: 0 auto; padding-top: 8px; }

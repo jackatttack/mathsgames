@@ -21,9 +21,11 @@ NEEDS_EDITORKIT = ('The web games need editorkit: install Toolbox for Pythonista
                    '(github.com/jackatttack/editorkit), then run this again.')
 
 
-def open_game(game_id, full_screen=True):
+def open_game(game_id, full_screen=True, on_leave=None):
     """Open one web game. Returns its WebGameHost, or None when it could not
-    be opened (a window or the console says why)."""
+    be opened (a window or the console says why). Full screen, the game
+    draws its own header; its Back closes the game, then calls on_leave
+    (the Maths Games menu passes one that brings the menu back)."""
     try:
         import editorkit as ek
     except ImportError:
@@ -37,7 +39,8 @@ def open_game(game_id, full_screen=True):
         if game_id not in PORTED:
             raise RuntimeError('%s has no web version yet' % info.title)
         module = importlib.import_module('%s.%s' % (__name__, game_id))
-        host = shell.WebGameHost(module.Game(), info)
+        host = shell.WebGameHost(module.Game(), info, full_screen=full_screen,
+                                 on_leave=on_leave)
     except Exception:
         details = traceback.format_exc()
         print(details)
