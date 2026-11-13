@@ -57,6 +57,9 @@ GEAR_ICON = ('<svg viewBox="0 0 24 24" width="26" height="26">'
              'stroke-dasharray="3.5 3.57"/><circle cx="12" cy="12" r="7" fill="currentColor"/>'
              '<circle cx="12" cy="12" r="3" fill="var(--mg-button)"/></svg>')
 HELP_ICON_TEXT = '?'
+MINIMISE_ICON = ('<svg viewBox="0 0 24 24" width="24" height="24"><path d="M4 4 L10 10 M10 4.5 V10 H4.5 '
+                 'M20 20 L14 14 M14 19.5 V14 H19.5" fill="none" stroke="currentColor" stroke-width="2.6" '
+                 'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 SETTINGS_ICON = '⚙️'
 HELP_ICON = '❓'
 
@@ -88,7 +91,7 @@ html, body { background: var(--mg-background) !important; color: var(--mg-text);
 .mg-title { font-size: 24px; font-weight: 700; margin: 6px 0 2px 0; }
 .mg-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
     margin: 0 4px 14px 4px; }
-.mg-head .l { justify-self: start; }
+.mg-head .l { justify-self: start; display: flex; gap: 12px; }
 .mg-head .r { justify-self: end; display: flex; gap: 12px; }
 .mg-round { width: 50px; height: 50px; border-radius: 25px; background: var(--mg-button);
     color: var(--mg-text); display: flex; align-items: center; justify-content: center;
@@ -227,7 +230,8 @@ class WebGameHost:
         self.info = info
         self.on_leave = on_leave
         self.showing_help = False        # the how-to-play text in the page (own header)
-        self.own_header = False
+        self.own_header = False          # editorkit hides its header for us when full screen
+        self.drawn_full = False          # full screen when the page was last drawn
         self.window = ek.Window(info.title + TITLE_SUFFIX, emoji=WINDOW_EMOJI,
                                 key=WINDOW_KEY % info.game_id)
         css, count = theme_css(info.game_id, getattr(game, 'THEME_TOKENS', THEME_TOKENS))
@@ -265,10 +269,22 @@ class WebGameHost:
         return False
 
     def keep_importable(self, now=None):
+        """Every tick: keep Maths Games importable, and redraw when the
+        window goes in or out of full screen (the header changes hands)."""
         use_maths_games()
+        if self.is_full() != self.drawn_full:
+            self.draw()
+
+    def is_full(self):
+        return getattr(self.window, 'full_sheet', None) is not None
+
+    def showing_own_header(self):
+        """The game's header shows full screen; in window mode editorkit's does."""
+        return self.own_header and self.is_full()
 
     def draw(self):
-        if self.own_header:
+        self.drawn_full = self.is_full()
+        if self.showing_own_header():
             body = self.header_html() + (self.help_page() if self.showing_help else self.game.html())
             self.page.set_html('<div class="mg-page mg-full">%s</div>' % body)
         else:
@@ -306,10 +322,12 @@ class WebGameHost:
         if self.help_card is not None:
             right.append('<div class="mg-round" data-go="hdr/help">%s</div>' % HELP_ICON_TEXT)
         right.append('<div class="mg-round" data-go="hdr/settings">%s</div>' % GEAR_ICON)
-        return ('<div class="mg-head"><div class="l"><div class="mg-round" data-go="hdr/back">%s</div></div>'
+        return ('<div class="mg-head"><div class="l"><div class="mg-round" data-go="hdr/back">%s</div>'
+                '<div class="mg-round" data-go="hdr/window">%s</div></div>'
                 '<div><div class="t">%s</div><div class="s">%s</div></div>'
                 '<div class="r">%s</div></div>'
-                % (BACK_ICON, html.escape(self.info.title), html.escape(subtitle), ''.join(right)))
+                % (BACK_ICON, MINIMISE_ICON, html.escape(self.info.title), html.escape(subtitle),
+                   ''.join(right)))
 
     def help_page(self):
         return ('<div class="mg-help">%s</div>'
@@ -326,6 +344,12 @@ class WebGameHost:
                 self.game.toggle_settings()
             else:
                 self.leave()
+        elif what == 'window':
+            self.showing_help = False
+            try:
+                self.window.leave_full()     # window mode: editorkit's header, ＋ comes back
+            except Exception:
+                traceback.print_exc()
         elif what == 'help':
             self.showing_help = not self.showing_help
         elif what == 'settings':
